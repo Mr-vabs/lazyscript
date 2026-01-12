@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
-import DOMPurify from 'dompurify'; // FIX: Changed from * as DOMPurify
+import DOMPurify from 'dompurify'; // FIX: Correct import for types
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -356,7 +356,6 @@ const App = () => {
         }
 
         const tableRows: TableRow[] = [];
-        // FIX: Removed unused 'rIdx'
         for (let r = 0; r < rows.length; r++) {
             const rowData: (CellStyle | null)[] = [];
             for (let c = 0; c < maxCols; c++) {
@@ -372,8 +371,11 @@ const App = () => {
                     const isBold = el.tagName === 'TH' || el.style.fontWeight === 'bold' || !!el.querySelector('b, strong');
                     const isUnderline = el.tagName === 'U' || el.style.textDecoration === 'underline' || !!el.querySelector('u');
                     
-                    const alignVal = el.style.textAlign || el.getAttribute('align') || 'left';
-                    const align = (['center', 'right'].includes(alignVal) ? alignVal : 'left') as AlignType;
+                    // FIX: Strict type conversion for alignment
+                    const rawAlign = el.style.textAlign || el.getAttribute('align') || '';
+                    let align: AlignType = 'left';
+                    if (rawAlign === 'center') align = 'center';
+                    if (rawAlign === 'right') align = 'right';
 
                     rowData.push({
                         text: clone.innerText.trim(),
@@ -419,8 +421,13 @@ const App = () => {
             segments.push({ type: 'text', text: bullet, color: newColor, isBold: true }); 
             if (listContext.type === 'ol') listContext.index++;
         }
-        const alignVal = el.style.textAlign || el.getAttribute('align') || 'left';
-        const align = (['center', 'right'].includes(alignVal) ? alignVal : 'left') as AlignType;
+        
+        // FIX: Strict type conversion for alignment
+        const rawAlign = el.style.textAlign || el.getAttribute('align') || '';
+        let align: AlignType = 'left';
+        if (rawAlign === 'center') align = 'center';
+        if (rawAlign === 'right') align = 'right';
+
         node.childNodes.forEach(child => {
             if (child.nodeType === Node.TEXT_NODE) {
                 const text = child.textContent || "";
@@ -535,10 +542,8 @@ const App = () => {
         let cursorX = MARGIN_X;
         let maxLineHeight = CURRENT_LINE_HEIGHT;
 
-        // FIX: Explicit typing to prevent TS2367
         let lineTextWidth = 0;
         let dominantAlign: AlignType = 'left';
-        
         line.forEach(seg => {
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
@@ -567,7 +572,8 @@ const App = () => {
            else if (seg.type === 'table' && seg.tableData) {
                const { rows, colWidths } = seg.tableData;
                let tableY = cursorY;
-               rows.forEach((row, rIdx) => {
+               // FIX: Removed unused 'rIdx' argument
+               rows.forEach((row) => {
                    let tableX = MARGIN_X; 
                    const rowHeight = row.maxHeight || CURRENT_LINE_HEIGHT;
                    row.cells.forEach((cell, cIdx) => {
@@ -695,7 +701,6 @@ const App = () => {
   };
 
   useEffect(() => {
-    // Dynamic Favicon
     const link = document.createElement('link');
     link.rel = 'icon';
     link.href = 'https://upload.wikimedia.org/wikipedia/en/b/bd/Shin_chan_Source.png'; 
@@ -722,7 +727,6 @@ const App = () => {
   return (
     <div className={`min-h-screen flex flex-col items-center font-sans transition-colors duration-300 ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-neutral-100 text-slate-800'}`}>
       <style>{sliderStyle}</style>
-      
       <style>
         {`@import url('https://fonts.googleapis.com/css2?family=Allura&family=Caveat:wght@400;700&family=Cedarville+Cursive&family=Dancing+Script:wght@400;700&family=Homemade+Apple&family=Indie+Flower&family=Just+Another+Hand&family=Shadows+Into+Light&display=swap');`}
       </style>
@@ -731,7 +735,7 @@ const App = () => {
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             <h1 className="text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.1</span>
+               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.2</span>
                {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
             <div className="flex gap-3">
@@ -854,7 +858,7 @@ const App = () => {
            {pages.map((_, i) => (
              <div key={i} className="relative group shrink-0 max-w-full">
                <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i+1}</span>
-               {/* FIX: Add braces to ref callback to fix TS2322 */}
+               {/* FIX: Add braces to return void */}
                <canvas ref={el => { canvasRefs.current[i] = el; }} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="bg-white shadow-2xl rounded-sm transition-transform duration-300 hover:scale-[1.02] max-w-full h-auto" />
              </div>
            ))}

@@ -38,7 +38,7 @@
 
 ### 💾 Save & Export
 - **PDF Export:** High-resolution A4 output.
-- **Project Files:** Save/Load `.azm` files (with DOMPurify security).
+- **Project Files:** Save/Load `.lazy` files (with DOMPurify security).
 
 ---
 
