@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
-import DOMPurify from 'dompurify'; // FIX: Correct import for types
+import DOMPurify from 'dompurify';
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -356,7 +356,6 @@ const App = () => {
         }
 
         const tableRows: TableRow[] = [];
-        // FIX: Removed unused 'rIdx'
         for (let r = 0; r < rows.length; r++) {
             const rowData: (CellStyle | null)[] = [];
             for (let c = 0; c < maxCols; c++) {
@@ -373,7 +372,7 @@ const App = () => {
                     const isUnderline = el.tagName === 'U' || el.style.textDecoration === 'underline' || !!el.querySelector('u');
                     
                     const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
-                    let align = 'left' as AlignType; // FIX: Strict casting
+                    let align: AlignType = 'left';
                     if (rawAlign === 'center') align = 'center';
                     if (rawAlign === 'right') align = 'right';
 
@@ -423,7 +422,7 @@ const App = () => {
         }
         
         const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
-        let align = 'left' as AlignType; // FIX: Strict casting
+        let align: AlignType = 'left';
         if (rawAlign === 'center') align = 'center';
         if (rawAlign === 'right') align = 'right';
 
@@ -541,21 +540,22 @@ const App = () => {
         let cursorX = MARGIN_X;
         let maxLineHeight = CURRENT_LINE_HEIGHT;
 
-        let lineTextWidth = 0;
-        let dominantAlign: AlignType = 'left'; // FIX: Explicit type
+        // FIX: Force type definition to include ALL align types, not just what's inferred
+        let dominantAlign: 'left' | 'center' | 'right' = 'left';
         
+        let lineTextWidth = 0;
         line.forEach(seg => {
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
-                if (seg.align) dominantAlign = seg.align; 
+                if (seg.align) {
+                    // FIX: Explicitly cast here to ensure type safety propagates
+                    dominantAlign = seg.align as 'left' | 'center' | 'right';
+                }
             }
         });
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
         
-        // FIX: The error was here. TS thinks dominantAlign is 'left' only.
-        // By casting at declaration or ensuring assignment logic is clear, we fix it.
-        // Since TextSegment defines align?: AlignType, TS should know.
-        // But to be safe, we check specifically:
+        // Now TS knows dominantAlign CAN be 'center' or 'right'
         if (dominantAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
         else if (dominantAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
@@ -577,7 +577,6 @@ const App = () => {
            else if (seg.type === 'table' && seg.tableData) {
                const { rows, colWidths } = seg.tableData;
                let tableY = cursorY;
-               // FIX: Removed rIdx
                rows.forEach((row) => {
                    let tableX = MARGIN_X; 
                    const rowHeight = row.maxHeight || CURRENT_LINE_HEIGHT;
@@ -664,7 +663,7 @@ const App = () => {
 
   const saveProject = () => {
       const project: ProjectFile = {
-          version: '16.3',
+          version: '16.4',
           htmlContent: editorRef.current?.innerHTML || '',
           settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
       };
@@ -740,7 +739,7 @@ const App = () => {
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             <h1 className="text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.3</span>
+               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.4</span>
                {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
             <div className="flex gap-3">

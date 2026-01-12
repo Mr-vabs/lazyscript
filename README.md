@@ -94,7 +94,12 @@ Since this is a private repo, connect your GitHub account to Netlify:
 
 ## 📜 Full Changelog
 
-### v16.1 (Current)
+### Changelog v16.4 (Current)
+- **Critical Fix (TS2367):** Changed the declaration of **dominantAlign** in the Renderer loop to explicitly allow all 3 states: 'left' | 'center' | 'right'.
+- **Explicit Casting:** Added specific type casting inside the loop (seg.align as ...) to ensure data flows correctly without narrowing.
+- **Strict Typing:** Ensured AlignType is used consistently across the parser and renderer.
+
+### v16.1
 - **UI Fix:** Restored the **Line Opacity** slider.
 - **Organization:** Grouped all 4 customization sliders (Messiness, Size, Spacing, Opacity) in the UI.
 
