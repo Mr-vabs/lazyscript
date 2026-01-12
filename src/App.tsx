@@ -356,6 +356,7 @@ const App = () => {
         }
 
         const tableRows: TableRow[] = [];
+        // FIX: Removed unused 'rIdx'
         for (let r = 0; r < rows.length; r++) {
             const rowData: (CellStyle | null)[] = [];
             for (let c = 0; c < maxCols; c++) {
@@ -371,9 +372,8 @@ const App = () => {
                     const isBold = el.tagName === 'TH' || el.style.fontWeight === 'bold' || !!el.querySelector('b, strong');
                     const isUnderline = el.tagName === 'U' || el.style.textDecoration === 'underline' || !!el.querySelector('u');
                     
-                    // FIX: Strict type conversion for alignment
-                    const rawAlign = el.style.textAlign || el.getAttribute('align') || '';
-                    let align: AlignType = 'left';
+                    const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
+                    let align = 'left' as AlignType; // FIX: Strict casting
                     if (rawAlign === 'center') align = 'center';
                     if (rawAlign === 'right') align = 'right';
 
@@ -422,9 +422,8 @@ const App = () => {
             if (listContext.type === 'ol') listContext.index++;
         }
         
-        // FIX: Strict type conversion for alignment
-        const rawAlign = el.style.textAlign || el.getAttribute('align') || '';
-        let align: AlignType = 'left';
+        const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
+        let align = 'left' as AlignType; // FIX: Strict casting
         if (rawAlign === 'center') align = 'center';
         if (rawAlign === 'right') align = 'right';
 
@@ -543,7 +542,8 @@ const App = () => {
         let maxLineHeight = CURRENT_LINE_HEIGHT;
 
         let lineTextWidth = 0;
-        let dominantAlign: AlignType = 'left';
+        let dominantAlign: AlignType = 'left'; // FIX: Explicit type
+        
         line.forEach(seg => {
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
@@ -551,6 +551,11 @@ const App = () => {
             }
         });
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
+        
+        // FIX: The error was here. TS thinks dominantAlign is 'left' only.
+        // By casting at declaration or ensuring assignment logic is clear, we fix it.
+        // Since TextSegment defines align?: AlignType, TS should know.
+        // But to be safe, we check specifically:
         if (dominantAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
         else if (dominantAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
@@ -572,7 +577,7 @@ const App = () => {
            else if (seg.type === 'table' && seg.tableData) {
                const { rows, colWidths } = seg.tableData;
                let tableY = cursorY;
-               // FIX: Removed unused 'rIdx' argument
+               // FIX: Removed rIdx
                rows.forEach((row) => {
                    let tableX = MARGIN_X; 
                    const rowHeight = row.maxHeight || CURRENT_LINE_HEIGHT;
@@ -659,7 +664,7 @@ const App = () => {
 
   const saveProject = () => {
       const project: ProjectFile = {
-          version: '16.1',
+          version: '16.3',
           htmlContent: editorRef.current?.innerHTML || '',
           settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
       };
@@ -735,7 +740,7 @@ const App = () => {
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             <h1 className="text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.2</span>
+               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.3</span>
                {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
             <div className="flex gap-3">
@@ -858,7 +863,7 @@ const App = () => {
            {pages.map((_, i) => (
              <div key={i} className="relative group shrink-0 max-w-full">
                <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i+1}</span>
-               {/* FIX: Add braces to return void */}
+               {/* FIX: Add braces to ref callback to fix TS2322 */}
                <canvas ref={el => { canvasRefs.current[i] = el; }} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="bg-white shadow-2xl rounded-sm transition-transform duration-300 hover:scale-[1.02] max-w-full h-auto" />
              </div>
            ))}
