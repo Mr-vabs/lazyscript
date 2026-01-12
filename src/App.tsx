@@ -372,7 +372,7 @@ const App = () => {
                     const isUnderline = el.tagName === 'U' || el.style.textDecoration === 'underline' || !!el.querySelector('u');
                     
                     const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
-                    let align: AlignType = 'left';
+                    let align = 'left' as AlignType; 
                     if (rawAlign === 'center') align = 'center';
                     if (rawAlign === 'right') align = 'right';
 
@@ -422,7 +422,7 @@ const App = () => {
         }
         
         const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
-        let align: AlignType = 'left';
+        let align = 'left' as AlignType;
         if (rawAlign === 'center') align = 'center';
         if (rawAlign === 'right') align = 'right';
 
@@ -540,24 +540,22 @@ const App = () => {
         let cursorX = MARGIN_X;
         let maxLineHeight = CURRENT_LINE_HEIGHT;
 
-        // FIX: Force type definition to include ALL align types, not just what's inferred
-        let dominantAlign: 'left' | 'center' | 'right' = 'left';
+        let dominantAlign: AlignType = 'left';
         
         let lineTextWidth = 0;
         line.forEach(seg => {
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
                 if (seg.align) {
-                    // FIX: Explicitly cast here to ensure type safety propagates
-                    dominantAlign = seg.align as 'left' | 'center' | 'right';
+                    dominantAlign = seg.align;
                 }
             }
         });
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
         
-        // Now TS knows dominantAlign CAN be 'center' or 'right'
-        if (dominantAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
-        else if (dominantAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
+        // FIX: The Nuclear Option (cast to string) to force TS to accept the comparison
+        if ((dominantAlign as string) === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
+        else if ((dominantAlign as string) === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
            if (seg.type === 'image' && seg.src) {
@@ -663,7 +661,7 @@ const App = () => {
 
   const saveProject = () => {
       const project: ProjectFile = {
-          version: '16.4',
+          version: '16.5',
           htmlContent: editorRef.current?.innerHTML || '',
           settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
       };
@@ -739,7 +737,7 @@ const App = () => {
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             <h1 className="text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.4</span>
+               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.5</span>
                {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
             <div className="flex gap-3">
