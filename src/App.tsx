@@ -37,14 +37,37 @@ const DEFAULT_CONTENT = `
 <p><br></p>
 `;
 
-const AI_SYSTEM_PROMPT = `You are an assignment solver for a tool called LazyScript. 
-1. Output your answer in clean HTML format.
-2. Use <h3> for headings (e.g., Question 1).
-3. Use <p> for paragraphs.
-4. Use <table> with border="1" style="border-collapse: collapse; width: 100%;" for structured data.
-5. Do NOT use Markdown (no ** or ##). 
-6. Keep formatting simple.
-Here is the question to solve:
+const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
+1. Output ONLY the raw HTML body content. Do not wrap in markdown \`\`\` blocks.
+2. **Q&A Format:**
+   - Questions: BLACK (#000000) and Bold.
+   - Answers: BLUE (#000f55) and Standard weight.
+   - Structure:
+     <p>
+       <span style="color: #000000; font-weight: bold;">Ques 1:</span> <span style="color: #000000;">[Question text]</span><br/>
+       <span style="color: #000f55; font-weight: bold;">Ans 1:</span> <span style="color: #000f55;">[Answer text]</span>
+     </p>
+
+3. **Code Snippets (CRITICAL):**
+   - If the answer involves code (C, C++, Python, SQL), YOU MUST wrap it in a <pre> block.
+   - Style: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">
+   - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
+   - Example:
+     <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000000;">
+     #include &lt;iostream&gt;
+     
+     int main() {
+         cout << "Hello";
+         return 0;
+     }
+     </pre>
+
+4. **Tables:**
+   - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
+   - Cells: <td style="border: 1px solid black; padding: 5px; color: #000f55;">
+
+5. Do NOT use markdown. formatting must be inline CSS.
+Here is the question:
 [PASTE QUESTION HERE]`;
 
 // --- FONTS REGISTRY ---
@@ -126,6 +149,28 @@ const App = () => {
   const copyAIPrompt = () => {
       navigator.clipboard.writeText(AI_SYSTEM_PROMPT);
       showToast("AI Prompt copied! Paste it in ChatGPT/Gemini.", "success");
+  };
+  
+  const pasteAIHtml = async () => {
+      try {
+          // Read text from clipboard
+          const text = await navigator.clipboard.readText();
+          
+          // Simple check to see if it looks like HTML (contains tags)
+          if (text.includes('<') && text.includes('>')) {
+              if (editorRef.current) {
+                  editorRef.current.focus();
+                  // This command inserts the text AS HTML, not as strings
+                  document.execCommand('insertHTML', false, text);
+                  triggerParse();
+                  showToast("AI Code pasted & rendered!", "success");
+              }
+          } else {
+              showToast("Clipboard doesn't look like HTML code.", "error");
+          }
+      } catch (err) {
+          showToast("Failed to read clipboard. Allow permissions.", "error");
+      }
   };
 
   const clearEditor = () => {
@@ -814,35 +859,53 @@ const App = () => {
           ))}
       </div>
 
-      <header className={`sticky top-0 z-50 w-full px-6 py-4 transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/90 border-slate-700' : 'bg-white/90 border-slate-200'} backdrop-blur-md border-b flex justify-between items-center shadow-sm`}>
+      <header className="fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 py-4 transition-colors duration-300 bg-white/90 border-b border-slate-200 backdrop-blur-md flex justify-between items-center shadow-sm">
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-               <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v17.0</span>
-               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
+            {/* Title Section */}
+            <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
+               <span className="text-blue-600 text-2xl sm:text-3xl">😴</span> 
+               <span>LazyScript</span>
+               <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v17.6</span>
+               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
-            <div className="flex gap-3">
-                <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-full transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'}`}>{isDarkMode ? <Sun size={20} className="text-yellow-400"/> : <Moon size={20} className="text-slate-600"/>}</button>
-                <div className="w-px h-8 bg-slate-300 mx-2 opacity-50 hidden sm:block"></div>
-                <div className="flex gap-2">
-                    <button onClick={() => fileInputRef.current?.click()} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}><FileUp size={16}/><span className="hidden sm:inline">Import</span></button>
+
+            {/* Header Actions */}
+            <div className="flex gap-2">
+                <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-full transition-colors bg-slate-100 hover:bg-slate-200 text-slate-600">
+                    {isDarkMode ? <Sun size={18} className="text-yellow-500"/> : <Moon size={18}/>}
+                </button>
+                
+                <div className="w-px h-8 bg-slate-300 mx-1 opacity-50 hidden sm:block"></div>
+                
+                <div className="flex gap-1 sm:gap-2">
+                    <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white hover:bg-slate-50 border border-slate-200">
+                        <FileUp size={16}/> <span className="hidden sm:inline">Import</span>
+                    </button>
                     <input type="file" ref={fileInputRef} onChange={loadProject} accept=".lazy,.json,.azm" className="hidden" />
-                    <button onClick={saveProject} className={`px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}><Save size={16}/><span className="hidden sm:inline">Save</span></button>
-                    <button onClick={downloadPDF} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg shadow-md text-sm font-medium flex gap-2 items-center transition-transform hover:scale-105"><Download size={16}/><span className="hidden sm:inline">PDF</span></button>
+                    
+                    <button onClick={saveProject} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white hover:bg-slate-50 border border-slate-200">
+                        <Save size={16}/> <span className="hidden sm:inline">Save</span>
+                    </button>
+                    
+                    <button onClick={downloadPDF} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2 rounded-lg shadow-md text-sm font-medium flex gap-2 items-center transition-transform hover:scale-105">
+                        <Download size={16}/> <span className="hidden sm:inline">PDF</span>
+                    </button>
                 </div>
             </div>
         </div>
       </header>
 
+
       {/* MOBILE PROCESSING INDICATOR */}
       {isProcessing && <div className="sm:hidden fixed top-[70px] left-0 w-full h-1 bg-blue-100"><div className="h-full bg-blue-500 animate-[loading_1s_infinite_ease-in-out]"></div></div>}
 
-      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 py-8 lg:h-[calc(100vh-80px)] h-auto overflow-y-auto lg:overflow-hidden">
-        
+      
+        <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 pb-8 pt-28 lg:h-screen h-auto overflow-y-auto lg:overflow-hidden">
+
         <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
           <div className={`p-4 border-b transition-colors shrink-0 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'} flex flex-col gap-4`}>
-             <div className="flex flex-wrap gap-2 justify-between items-center">
-                 <div className="flex gap-2 items-center">
+             <div className="flex flex-wrap gap-3 justify-between items-center">
+                 <div className="flex flex-wrap gap-2 items-center">
                     <div className={`flex rounded-md overflow-hidden border ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
                         {['#000000', '#000f55', '#cc0000', '#1a5c20'].map(c => ( <button key={c} onClick={() => applyFormat('foreColor', c)} className="w-8 h-8 hover:opacity-80 transition-opacity" style={{backgroundColor: c}} title="Ink Color" /> ))}
                     </div>
@@ -853,9 +916,11 @@ const App = () => {
                     {/* NEW: AI BUTTON */}
                     <button onClick={copyAIPrompt} className="p-2 rounded bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors ml-2 flex gap-1 items-center font-bold text-xs" title="Copy AI Prompt"><Bot size={16}/> AI Prompt</button>
                     
+{/* NEW PASTE BUTTON */}
+<button onClick={pasteAIHtml} className="p-2 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors ml-1 flex gap-1 items-center font-bold text-xs" title="Paste AI HTML Code"><FilePlus size={16}/> Paste AI</button>
                     {/* NEW: CLEAR BUTTON (3 Stage) */}
                     <button onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Clear Canvas">
-                        {clearConfirmStage === 0 ? <><FilePlus size={16}/></> : clearConfirmStage === 1 ? "Clear?" : "Really??"}
+                        {clearConfirmStage === 0 ? <><Trash2 size={16}/></> : clearConfirmStage === 1 ? "Clear?" : "Really??"}
                     </button>
                  </div>
                  
