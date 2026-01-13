@@ -18,27 +18,26 @@
 
 ## ✨ Features
 
-### 🎨 Customization
-- **Realistic Handwriting:** 6+ unique handwriting styles (Messy, Cursive, Neat, etc.).
-- **Humanization:** - **Messiness:** Randomizes vertical position and rotation.
-  - **Letter Spacing:** Adjustable gaps between characters.
-  - **Font Size:** Scalable text.
-  - **Ink Opacity:** Simulates ballpoint pen pressure.
-- **Paper Styles:** Lined, Grid (Math), or Blank.
+### ✍️ Core Handwriting Engine
+* **Realistic Rendering:** Converts text to handwriting using 6 distinct font styles (Standard, Cursive, Messy, etc.).
+* **Human Imperfections:** adjustable **Messiness** (skew/rotation) and **Spacing** sliders to mimic natural writing.
+* **Paper Styles:** Toggle between **Lined**, **Grid**, or **Blank** backgrounds.
+* **Visual Effects:**
+    * **Scanner Mode:** Adds shadows and noise to look like a scanned document.
+    * **Blue/Red Lines:** Adjustable opacity for the page ruling.
 
-### 📝 Rich Editor
-- **Formatting:** Bold, Underline, Bullet Points, Numbered Lists.
-- **Text Case Tools:** Convert selection to UPPERCASE, lowercase, or Title Case.
-- **Alignment:** Left, Center, and Right alignment support.
+### 🛠 Editor Tools
+* **Rich Text:** Support for **Bold**, **Underline**, and multiple **Ink Colors**.
+* **Smart Tables:** Create tables with advanced controls to **Merge Cells**, add/remove rows, and auto-resize columns.
+* **Case Management:** Instantly convert text to **UPPERCASE**, **lowercase**, or **Title Case**.
+* **Image Support:** Drag and drop images which render with a "taped-on" visual effect.
 
-### 📊 Advanced Tables & Images
-- **Table Engine:** Add/Delete Rows and Columns.
-- **Merge Support:** Merge cells horizontally (Colspan) or vertically (Rowspan).
-- **Images:** Drag & drop or upload. Includes "Select to Delete" functionality.
+### 🤖 AI Assistance
+* **Prompt Generator:** Built-in tool to generate a system prompt for ChatGPT/Gemini. This ensures the AI outputs answers in a format LazyScript can read perfectly (HTML/Tables).
 
-### 💾 Save & Export
-- **PDF Export:** High-resolution A4 output.
-- **Project Files:** Save/Load `.lazy` files (with DOMPurify security).
+### 💾 Export & Save
+* **PDF Export:** Downloads high-resolution A4 PDFs.
+* **Project Files:** Save/Load your work using `.lazy` JSON files to preserve settings and content.
 
 ---
 
@@ -94,7 +93,22 @@ Since this is a private repo, connect your GitHub account to Netlify:
 
 ## 📜 Full Changelog
 
-### Changelog v16.4 (Current)
+### Changelog v17.0 (Current)
+
+#### New Features
+* **AI Integration:** Added a **Robot Icon** 🤖 to the toolbar to copy the specialized AI system prompt.
+* **Table Merging:** Added logic to merge table cells both Right and Down (`rowSpan`/`colSpan`).
+* **Case Converter:** Added a dropdown menu to toggle text case without retyping.
+* **Paper Types:** Introduced logic to switch between Lined, Grid, and Blank paper (`setPaperType`).
+* **Toast System:** Replaced standard browser `alert()` with a custom, non-intrusive Toast Notification system for errors and success messages.
+
+#### Improvements
+* **Safety:** Added a 3-stage confirmation to the **Clear** button (`Clear?` -> `Really??`) to prevent accidents.
+* **Rendering:** Added a visual "tape" effect to inserted images (`ctx.fillRect` corners).
+* **Performance:** Implemented a debounce (300ms) on the parser to prevent lag while typing.
+* **UI:** Fully implemented Dark Mode styling for the toolbar and editor.
+
+### Changelog v16.4
 - **Critical Fix (TS2367):** Changed the declaration of **dominantAlign** in the Renderer loop to explicitly allow all 3 states: 'left' | 'center' | 'right'.
 - **Explicit Casting:** Added specific type casting inside the loop (seg.align as ...) to ensure data flows correctly without narrowing.
 - **Strict Typing:** Ensured AlignType is used consistently across the parser and renderer.

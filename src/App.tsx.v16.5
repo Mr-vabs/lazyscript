@@ -6,7 +6,7 @@ import {
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
     Columns, Rows, ArrowRightFromLine, ArrowDownFromLine, ImageMinus, 
     AlignLeft, AlignCenter, AlignRight, Type as FontIcon, ChevronDown, 
-    ArrowUpNarrowWide, CaseUpper, CaseLower, CaseSensitive, Bot, FilePlus, X
+    ArrowUpNarrowWide, CaseUpper, CaseLower, CaseSensitive 
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -17,35 +17,6 @@ const CANVAS_WIDTH = A4_WIDTH * SCALE;
 const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
 const MARGIN_X = 50 * SCALE;
 const MARGIN_Y = 60 * SCALE;
-
-// --- CONTENT TEMPLATES ---
-const DEFAULT_CONTENT = `
-<h3>Welcome to LazyScript!</h3>
-<p>This tool converts typed text into realistic handwriting.<br/>
-<strong>How to use:</strong></p>
-<ul>
-<li>Type directly here or paste text.</li>
-<li>Use the toolbar for <b>Bold</b>, <u>Underline</u>, or Text Color.</li>
-<li>Click the <b>Robot Icon</b> to copy a prompt for AI (ChatGPT/Gemini).</li>
-</ul>
-<p><strong>Table Example:</strong></p>
-<table style="width: 100%; border-collapse: collapse; border: 1px solid black;">
-    <tr><th style="border: 1px solid black; padding: 5px;">Feature</th><th style="border: 1px solid black; padding: 5px;">Status</th></tr>
-    <tr><td style="border: 1px solid black; padding: 5px;">Handwriting</td><td style="border: 1px solid black; padding: 5px;">Realistic</td></tr>
-    <tr><td style="border: 1px solid black; padding: 5px;">Export</td><td style="border: 1px solid black; padding: 5px;">PDF High Res</td></tr>
-</table>
-<p><br></p>
-`;
-
-const AI_SYSTEM_PROMPT = `You are an assignment solver for a tool called LazyScript. 
-1. Output your answer in clean HTML format.
-2. Use <h3> for headings (e.g., Question 1).
-3. Use <p> for paragraphs.
-4. Use <table> with border="1" style="border-collapse: collapse; width: 100%;" for structured data.
-5. Do NOT use Markdown (no ** or ##). 
-6. Keep formatting simple.
-Here is the question to solve:
-[PASTE QUESTION HERE]`;
 
 // --- FONTS REGISTRY ---
 const FONT_OPTIONS = [
@@ -80,7 +51,6 @@ type ProjectFile = {
     htmlContent: string;
     settings: { skew: number; lineOpacity: number; scanEffect: boolean; fontSize: number; paperType: PaperType; activeFontIndex: number; spacing: number; }
 };
-type ToastType = { id: number; message: string; type: 'info' | 'error' | 'success' };
 
 const App = () => {
   // --- STATE ---
@@ -89,7 +59,7 @@ const App = () => {
   const [spacingFactor, setSpacingFactor] = useState(0); 
   const [scanEffect, setScanEffect] = useState(false);
   const [lineOpacity, setLineOpacity] = useState(0.4); 
-  const [baseFontSize, setBaseFontSize] = useState(18);
+  const [baseFontSize, setBaseFontSize] = useState(22);
   const [paperType, setPaperType] = useState<PaperType>('lined');
   const [activeFontIndex, setActiveFontIndex] = useState(0); 
   const [isDarkMode, setIsDarkMode] = useState(false); 
@@ -97,8 +67,6 @@ const App = () => {
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null); 
   const [isFontMenuOpen, setIsFontMenuOpen] = useState(false); 
   const [isCaseMenuOpen, setIsCaseMenuOpen] = useState(false); 
-  const [clearConfirmStage, setClearConfirmStage] = useState(0);
-  const [toasts, setToasts] = useState<ToastType[]>([]);
   
   const editorRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
@@ -109,46 +77,7 @@ const App = () => {
   const CURRENT_LINE_HEIGHT = CURRENT_FONT_SIZE * 1.5;
   const CURRENT_FONT = FONT_OPTIONS[activeFontIndex];
 
-  // --- TOAST SYSTEM ---
-  const showToast = (message: string, type: 'info' | 'error' | 'success' = 'info') => {
-      const id = Date.now();
-      setToasts(prev => [...prev, { id, message, type }]);
-      setTimeout(() => {
-          setToasts(prev => prev.filter(t => t.id !== id));
-      }, 3000);
-  };
-
-  const removeToast = (id: number) => {
-      setToasts(prev => prev.filter(t => t.id !== id));
-  };
-
-  // --- EDITOR ACTIONS ---
-  const copyAIPrompt = () => {
-      navigator.clipboard.writeText(AI_SYSTEM_PROMPT);
-      showToast("AI Prompt copied! Paste it in ChatGPT/Gemini.", "success");
-  };
-
-  const clearEditor = () => {
-      if (clearConfirmStage === 0) {
-          setClearConfirmStage(1);
-          setTimeout(() => setClearConfirmStage(0), 4000); // Reset if inactive
-          return;
-      }
-      if (clearConfirmStage === 1) {
-          setClearConfirmStage(2);
-          setTimeout(() => setClearConfirmStage(0), 4000);
-          return;
-      }
-      if (clearConfirmStage === 2) {
-          if (editorRef.current) {
-              editorRef.current.innerHTML = "<p><br></p>";
-              triggerParse();
-          }
-          setClearConfirmStage(0);
-          showToast("Canvas cleared.", "info");
-      }
-  };
-
+  // --- EDITOR COMMANDS ---
   const applyFormat = (command: string, value?: string) => {
     document.execCommand(command, false, value);
     editorRef.current?.focus();
@@ -279,7 +208,7 @@ const App = () => {
 
   const modifyTable = (action: string) => {
       const cell = getSelectedCell();
-      if (!cell) { showToast("Click inside a table cell first!", "error"); return; }
+      if (!cell) { alert("Click inside a table cell first!"); return; }
       const row = cell.parentElement as HTMLTableRowElement;
       const table = row.parentElement?.parentElement as HTMLTableElement;
       if (!table) return;
@@ -311,7 +240,7 @@ const App = () => {
              newCell.style.border = "1px solid #000"; newCell.innerHTML = "New";
           }
       }
-      else if (action === 'delCol') { showToast("Column deletion restricted in complex tables.", "error"); }
+      else if (action === 'delCol') { alert("Column deletion in complex tables is restricted."); }
       else if (action === 'mergeRight') {
           const cellSpan = cell.colSpan || 1;
           const neighborX = cIdx + cellSpan;
@@ -322,7 +251,7 @@ const App = () => {
                       cell.colSpan = (cell.colSpan || 1) + (neighbor.colSpan || 1);
                       cell.innerHTML += " " + neighbor.innerHTML;
                       neighbor.remove();
-                  } else showToast("Cannot merge cells of different heights.", "error");
+                  } else alert("Cannot merge cells of different heights.");
               }
           }
       }
@@ -336,7 +265,7 @@ const App = () => {
                       cell.rowSpan = (cell.rowSpan || 1) + (neighbor.rowSpan || 1);
                       cell.innerHTML += "<br/>" + neighbor.innerHTML;
                       neighbor.remove();
-                  } else showToast("Cannot merge cells of different widths.", "error");
+                  } else alert("Cannot merge cells of different widths.");
               }
           }
       }
@@ -618,12 +547,13 @@ const App = () => {
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
                 if (seg.align) {
-                    dominantAlign = seg.align as AlignType;
+                    dominantAlign = seg.align;
                 }
             }
         });
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
         
+        // FIX: The Nuclear Option (cast to string) to force TS to accept the comparison
         if ((dominantAlign as string) === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
         else if ((dominantAlign as string) === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
@@ -731,7 +661,7 @@ const App = () => {
 
   const saveProject = () => {
       const project: ProjectFile = {
-          version: '17.0',
+          version: '16.5',
           htmlContent: editorRef.current?.innerHTML || '',
           settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
       };
@@ -740,7 +670,6 @@ const App = () => {
       a.href = URL.createObjectURL(blob);
       a.download = 'assignment.lazy';
       a.click();
-      showToast("Project saved!", "success");
   };
 
   const loadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -756,8 +685,7 @@ const App = () => {
               setPaperType(project.settings.paperType || 'lined'); setActiveFontIndex(project.settings.activeFontIndex || 0);
               setSpacingFactor(project.settings.spacing || 0);
               triggerParse();
-              showToast("Project loaded successfully!", "success");
-          } catch (err) { showToast("Invalid project file.", "error"); }
+          } catch (err) { alert("Invalid file"); }
       };
       reader.readAsText(file);
   };
@@ -772,7 +700,6 @@ const App = () => {
       }
     });
     doc.save('assignment.pdf');
-    showToast("PDF Downloaded!", "success");
   };
 
   useEffect(() => {
@@ -783,7 +710,11 @@ const App = () => {
 
     setTimeout(() => {
         if (editorRef.current) {
-            editorRef.current.innerHTML = DEFAULT_CONTENT;
+            editorRef.current.innerHTML = `<h3>Homework</h3><p>Data Table:</p>
+            <table style="width: 100%; border-collapse: collapse; border: 1px solid black;">
+                <tr><th style="border: 1px solid black; padding: 5px;">Item</th><th style="border: 1px solid black; padding: 5px;">Cost</th></tr>
+                <tr><td style="border: 1px solid black; padding: 5px;">Apple</td><td style="border: 1px solid black; padding: 5px;">$1.50</td></tr>
+            </table>`;
             triggerParse();
         }
     }, 100);
@@ -802,24 +733,12 @@ const App = () => {
         {`@import url('https://fonts.googleapis.com/css2?family=Allura&family=Caveat:wght@400;700&family=Cedarville+Cursive&family=Dancing+Script:wght@400;700&family=Homemade+Apple&family=Indie+Flower&family=Just+Another+Hand&family=Shadows+Into+Light&display=swap');`}
       </style>
 
-      {/* TOAST NOTIFICATIONS */}
-      <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
-          {toasts.map(toast => (
-              <div key={toast.id} className={`pointer-events-auto px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium flex items-center gap-2 animate-[slideUp_0.3s_ease-out] ${toast.type === 'error' ? 'bg-red-500' : toast.type === 'success' ? 'bg-green-500' : 'bg-slate-800'}`}>
-                  {toast.type === 'success' && <span>✅</span>}
-                  {toast.type === 'error' && <span>⚠️</span>}
-                  {toast.message}
-                  <button onClick={() => removeToast(toast.id)} className="ml-2 opacity-50 hover:opacity-100"><X size={14}/></button>
-              </div>
-          ))}
-      </div>
-
       <header className={`sticky top-0 z-50 w-full px-6 py-4 transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/90 border-slate-700' : 'bg-white/90 border-slate-200'} backdrop-blur-md border-b flex justify-between items-center shadow-sm`}>
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             <h1 className="text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-3xl">😴</span> LazyScript 
-               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v17.0</span>
-               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
+               <span className={`text-xs px-2 py-1 rounded ${isDarkMode ? 'bg-purple-900 text-purple-200' : 'bg-purple-100 text-purple-800'}`}>v16.5</span>
+               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
             </h1>
             <div className="flex gap-3">
                 <button onClick={() => setIsDarkMode(!isDarkMode)} className={`p-2 rounded-full transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700' : 'bg-slate-100 hover:bg-slate-200'}`}>{isDarkMode ? <Sun size={20} className="text-yellow-400"/> : <Moon size={20} className="text-slate-600"/>}</button>
@@ -834,9 +753,6 @@ const App = () => {
         </div>
       </header>
 
-      {/* MOBILE PROCESSING INDICATOR */}
-      {isProcessing && <div className="sm:hidden fixed top-[70px] left-0 w-full h-1 bg-blue-100"><div className="h-full bg-blue-500 animate-[loading_1s_infinite_ease-in-out]"></div></div>}
-
       <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 py-8 lg:h-[calc(100vh-80px)] h-auto overflow-y-auto lg:overflow-hidden">
         
         <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -849,17 +765,9 @@ const App = () => {
                     <div className={`w-px h-6 mx-1 ${isDarkMode ? 'bg-slate-600' : 'bg-slate-300'}`}></div>
                     <button onClick={() => applyFormat('bold')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Bold"><Bold size={18}/></button>
                     <button onClick={() => applyFormat('underline')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Underline"><Underline size={18}/></button>
-                    
-                    {/* NEW: AI BUTTON */}
-                    <button onClick={copyAIPrompt} className="p-2 rounded bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors ml-2 flex gap-1 items-center font-bold text-xs" title="Copy AI Prompt"><Bot size={16}/> AI Prompt</button>
-                    
-                    {/* NEW: CLEAR BUTTON (3 Stage) */}
-                    <button onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Clear Canvas">
-                        {clearConfirmStage === 0 ? <><FilePlus size={16}/></> : clearConfirmStage === 1 ? "Clear?" : "Really??"}
-                    </button>
                  </div>
-                 
-                 <div className="flex gap-2 items-center mt-2 sm:mt-0">
+                 <div className="flex gap-2 items-center">
+                    
                     <div className="relative case-selector">
                         <button onClick={() => setIsCaseMenuOpen(!isCaseMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
                             <ArrowUpNarrowWide size={14}/> 
@@ -952,6 +860,7 @@ const App = () => {
            {pages.map((_, i) => (
              <div key={i} className="relative group shrink-0 max-w-full">
                <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i+1}</span>
+               {/* FIX: Add braces to ref callback to fix TS2322 */}
                <canvas ref={el => { canvasRefs.current[i] = el; }} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="bg-white shadow-2xl rounded-sm transition-transform duration-300 hover:scale-[1.02] max-w-full h-auto" />
              </div>
            ))}
