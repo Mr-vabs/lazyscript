@@ -859,7 +859,7 @@ const App = () => {
           ))}
       </div>
 
-      <header className="fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 py-4 transition-colors duration-300 bg-white/90 border-b border-slate-200 backdrop-blur-md flex justify-between items-center shadow-sm">
+      <header className={`fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 py-4 transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/90 border-slate-700' : 'bg-white/90 border-slate-200'} border-b backdrop-blur-md flex justify-between items-center shadow-sm`}>
         <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
             {/* Title Section */}
             <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
@@ -878,12 +878,12 @@ const App = () => {
                 <div className="w-px h-8 bg-slate-300 mx-1 opacity-50 hidden sm:block"></div>
                 
                 <div className="flex gap-1 sm:gap-2">
-                    <button onClick={() => fileInputRef.current?.click()} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white hover:bg-slate-50 border border-slate-200">
+                    <button onClick={() => fileInputRef.current?.click()} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                         <FileUp size={16}/> <span className="hidden sm:inline">Import</span>
                     </button>
                     <input type="file" ref={fileInputRef} onChange={loadProject} accept=".lazy,.json,.azm" className="hidden" />
                     
-                    <button onClick={saveProject} className="px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors bg-white hover:bg-slate-50 border border-slate-200">
+                    <button onClick={saveProject} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                         <Save size={16}/> <span className="hidden sm:inline">Save</span>
                     </button>
                     
