@@ -4,9 +4,10 @@ import DOMPurify from 'dompurify';
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
-    Columns, Rows, ArrowRightFromLine, ArrowDownFromLine, ImageMinus, 
+    Columns, Rows, ArrowRightFromLine, ArrowDownFromLine, Delete, 
     AlignLeft, AlignCenter, AlignRight, Type as FontIcon, ChevronDown, 
-    ArrowUpNarrowWide, CaseUpper, CaseLower, CaseSensitive, Bot, FilePlus, X
+    ArrowUpNarrowWide, CaseUpper, CaseLower, CaseSensitive, Bot, FilePlus, X,
+    PenTool, Undo2, RefreshCw
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -26,14 +27,17 @@ const DEFAULT_CONTENT = `
 <ul>
 <li>Type directly here or paste text.</li>
 <li>Use the toolbar for <b>Bold</b>, <u>Underline</u>, or Text Color.</li>
-<li>Click the <b>Robot Icon</b> to copy a prompt for AI (ChatGPT/Gemini).</li>
+<li>Click the <b>Robot Icon</b> to copy a prompt for AI.</li>
 </ul>
-<p><strong>Table Example:</strong></p>
-<table style="width: 100%; border-collapse: collapse; border: 1px solid black;">
-    <tr><th style="border: 1px solid black; padding: 5px;">Feature</th><th style="border: 1px solid black; padding: 5px;">Status</th></tr>
-    <tr><td style="border: 1px solid black; padding: 5px;">Handwriting</td><td style="border: 1px solid black; padding: 5px;">Realistic</td></tr>
-    <tr><td style="border: 1px solid black; padding: 5px;">Export</td><td style="border: 1px solid black; padding: 5px;">PDF High Res</td></tr>
-</table>
+<p><strong>Code Example:</strong></p>
+<pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000000;">
+#include &lt;stdio.h&gt;
+
+int main() {
+   printf("Hello World");
+   return 0;
+}
+</pre>
 <p><br></p>
 `;
 
@@ -52,15 +56,6 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
    - If the answer involves code (C, C++, Python, SQL), YOU MUST wrap it in a <pre> block.
    - Style: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">
    - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
-   - Example:
-     <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000000;">
-     #include &lt;iostream&gt;
-     
-     int main() {
-         cout << "Hello";
-         return 0;
-     }
-     </pre>
 
 4. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -91,16 +86,25 @@ type CellStyle = {
 };
 type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number }; 
 type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
+
 type TextSegment = {
   type: SegmentType;
   text?: string; color?: string; isBold?: boolean; isUnderline?: boolean; align?: AlignType; width?: number;
   src?: string; height?: number;
   tableData?: TableData;
+  isCodeLine?: boolean; // New flag for code pagination
 };
 type PageData = { lines: TextSegment[][]; };
+
+// --- DRAWING TYPES ---
+type Point = { x: number, y: number };
+type Stroke = { points: Point[], color: string, width: number };
+type DrawingData = { [pageIndex: number]: Stroke[] };
+
 type ProjectFile = {
     version: string;
     htmlContent: string;
+    drawings?: DrawingData;
     settings: { skew: number; lineOpacity: number; scanEffect: boolean; fontSize: number; paperType: PaperType; activeFontIndex: number; spacing: number; }
 };
 type ToastType = { id: number; message: string; type: 'info' | 'error' | 'success' };
@@ -123,6 +127,12 @@ const App = () => {
   const [clearConfirmStage, setClearConfirmStage] = useState(0);
   const [toasts, setToasts] = useState<ToastType[]>([]);
   
+  // --- DRAWING STATE ---
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [drawings, setDrawings] = useState<DrawingData>({});
+  const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
+  const [inkColor, setInkColor] = useState('#000000'); 
+
   const editorRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,53 +158,40 @@ const App = () => {
   // --- EDITOR ACTIONS ---
   const copyAIPrompt = () => {
       navigator.clipboard.writeText(AI_SYSTEM_PROMPT);
-      showToast("AI Prompt copied! Paste it in ChatGPT/Gemini.", "success");
+      showToast("AI Prompt copied!", "success");
   };
   
   const pasteAIHtml = async () => {
       try {
-          // Read text from clipboard
           const text = await navigator.clipboard.readText();
-          
-          // Simple check to see if it looks like HTML (contains tags)
           if (text.includes('<') && text.includes('>')) {
               if (editorRef.current) {
                   editorRef.current.focus();
-                  // This command inserts the text AS HTML, not as strings
                   document.execCommand('insertHTML', false, text);
                   triggerParse();
-                  showToast("AI Code pasted & rendered!", "success");
+                  showToast("AI Code pasted!", "success");
               }
           } else {
               showToast("Clipboard doesn't look like HTML code.", "error");
           }
       } catch (err) {
-          showToast("Failed to read clipboard. Allow permissions.", "error");
+          showToast("Failed to read clipboard.", "error");
       }
   };
 
   const clearEditor = () => {
-      if (clearConfirmStage === 0) {
-          setClearConfirmStage(1);
-          setTimeout(() => setClearConfirmStage(0), 4000); // Reset if inactive
-          return;
-      }
-      if (clearConfirmStage === 1) {
-          setClearConfirmStage(2);
-          setTimeout(() => setClearConfirmStage(0), 4000);
-          return;
-      }
+      if (clearConfirmStage === 0) { setClearConfirmStage(1); setTimeout(() => setClearConfirmStage(0), 4000); return; }
+      if (clearConfirmStage === 1) { setClearConfirmStage(2); setTimeout(() => setClearConfirmStage(0), 4000); return; }
       if (clearConfirmStage === 2) {
-          if (editorRef.current) {
-              editorRef.current.innerHTML = "<p><br></p>";
-              triggerParse();
-          }
+          if (editorRef.current) { editorRef.current.innerHTML = "<p><br></p>"; triggerParse(); }
+          setDrawings({});
           setClearConfirmStage(0);
-          showToast("Canvas cleared.", "info");
+          showToast("New Page Created!", "info");
       }
   };
 
   const applyFormat = (command: string, value?: string) => {
+    if (command === 'foreColor' && value) setInkColor(value);
     document.execCommand(command, false, value);
     editorRef.current?.focus();
     triggerParse(); 
@@ -213,20 +210,108 @@ const App = () => {
   const changeCase = (type: 'upper' | 'lower' | 'title') => {
       const sel = window.getSelection();
       if (!sel || sel.rangeCount === 0) return;
-      
       const range = sel.getRangeAt(0);
       const content = range.toString();
       let newText = content;
-
       if (type === 'upper') newText = content.toUpperCase();
       if (type === 'lower') newText = content.toLowerCase();
-      if (type === 'title') {
-          newText = content.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
-      }
-
+      if (type === 'title') newText = content.toLowerCase().split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
       document.execCommand('insertText', false, newText);
       setIsCaseMenuOpen(false);
       triggerParse();
+  };
+
+  const preventFocusLoss = (e: React.MouseEvent) => {
+      e.preventDefault();
+  };
+
+  // --- DRAWING LOGIC ---
+  const getCanvasCoordinates = (e: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+  };
+
+  const renderSmoothStroke = (ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+      if (stroke.points.length < 2) return;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = stroke.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length - 1; i++) {
+          const p1 = stroke.points[i];
+          const p2 = stroke.points[i + 1];
+          const midPoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+          ctx.quadraticCurveTo(p1.x, p1.y, midPoint.x, midPoint.y);
+      }
+      const last = stroke.points[stroke.points.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
+  };
+
+  const startDrawing = (pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!isDrawingMode) return;
+      const canvas = canvasRefs.current[pageIndex];
+      if (!canvas) return;
+      canvas.setPointerCapture(e.pointerId);
+      const point = getCanvasCoordinates(e, canvas);
+      setCurrentStroke({ points: [point], color: inkColor, width: 2 * SCALE });
+  };
+
+  const drawMove = (pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!isDrawingMode || !currentStroke) return;
+      const canvas = canvasRefs.current[pageIndex];
+      if (!canvas) return;
+      const point = getCanvasCoordinates(e, canvas);
+      const newPoints = [...currentStroke.points, point];
+      const updatedStroke = { ...currentStroke, points: newPoints };
+      setCurrentStroke(updatedStroke);
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+          ctx.beginPath();
+          ctx.strokeStyle = updatedStroke.color;
+          ctx.lineWidth = updatedStroke.width;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          if (newPoints.length > 2) {
+              const last = newPoints[newPoints.length - 2];
+              const secondLast = newPoints[newPoints.length - 3];
+              const mid1 = { x: (secondLast.x + last.x)/2, y: (secondLast.y + last.y)/2 };
+              const mid2 = { x: (last.x + point.x)/2, y: (last.y + point.y)/2 };
+              ctx.moveTo(mid1.x, mid1.y);
+              ctx.quadraticCurveTo(last.x, last.y, mid2.x, mid2.y);
+              ctx.stroke();
+          } else if (newPoints.length === 2) {
+              ctx.moveTo(newPoints[0].x, newPoints[0].y);
+              ctx.lineTo(newPoints[1].x, newPoints[1].y);
+              ctx.stroke();
+          }
+      }
+  };
+
+  const stopDrawing = (pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!isDrawingMode || !currentStroke) return;
+      const canvas = canvasRefs.current[pageIndex];
+      if(canvas) canvas.releasePointerCapture(e.pointerId);
+      setDrawings(prev => {
+          const pageDrawings = prev[pageIndex] || [];
+          return { ...prev, [pageIndex]: [...pageDrawings, currentStroke] };
+      });
+      setCurrentStroke(null);
+  };
+
+  const undoDrawing = () => {
+      const pageIndices = Object.keys(drawings).map(Number).sort((a,b) => b-a);
+      if (pageIndices.length === 0) return;
+      const lastPage = pageIndices[0];
+      const pageDrawings = drawings[lastPage];
+      if (pageDrawings && pageDrawings.length > 0) {
+          const newDrawings = pageDrawings.slice(0, -1);
+          setDrawings({ ...drawings, [lastPage]: newDrawings });
+      }
   };
 
   // --- IMAGE MANAGEMENT ---
@@ -251,10 +336,10 @@ const App = () => {
       if (selectedImage) {
           selectedImage.remove();
           setSelectedImage(null);
+          triggerParse(); 
       } else {
-          document.execCommand('delete');
+          document.execCommand('delete'); // Fallback to standard delete if no image selected
       }
-      triggerParse();
   };
 
   const insertImage = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -267,27 +352,27 @@ const App = () => {
           const img = document.createElement('img');
           img.src = result;
           img.style.maxWidth = "300px"; img.style.display = "block"; img.style.margin = "10px 0";
-
-          const sel = window.getSelection();
-          let inserted = false;
-          if (sel && sel.rangeCount > 0) {
-              const range = sel.getRangeAt(0);
-              if (editorRef.current?.contains(range.commonAncestorContainer)) {
-                  range.deleteContents(); range.insertNode(img); range.collapse(false); 
-                  inserted = true;
+          
+          if (editorRef.current) {
+              editorRef.current.focus();
+              const sel = window.getSelection();
+              if (sel && sel.rangeCount > 0 && editorRef.current.contains(sel.anchorNode)) {
+                 const range = sel.getRangeAt(0);
+                 range.deleteContents();
+                 range.insertNode(img);
+                 range.collapse(false);
+              } else {
+                 editorRef.current.appendChild(img);
               }
-          }
-          if (!inserted && editorRef.current) {
-              editorRef.current.appendChild(img);
               editorRef.current.appendChild(document.createElement('br'));
+              triggerParse();
           }
-          triggerParse();
       };
       reader.readAsDataURL(file);
       e.target.value = ''; 
   };
 
-  // --- TABLE LOGIC ---
+  // --- TABLE LOGIC (MATRIX ALGORITHM) ---
   const getSelectedCell = (): HTMLTableCellElement | null => {
       const sel = window.getSelection();
       if (!sel || !sel.rangeCount) return null;
@@ -299,29 +384,6 @@ const App = () => {
       return null;
   };
 
-  const getTableGrid = (table: HTMLTableElement) => {
-      const grid: { cell: HTMLTableCellElement, isOrigin: boolean }[][] = [];
-      for (let r = 0; r < table.rows.length; r++) grid[r] = [];
-      for (let r = 0; r < table.rows.length; r++) {
-          const row = table.rows[r];
-          let cIdx = 0;
-          for (let c = 0; c < row.cells.length; c++) {
-              while (grid[r][cIdx]) cIdx++;
-              const cell = row.cells[c];
-              const rs = cell.rowSpan || 1;
-              const cs = cell.colSpan || 1;
-              for (let i = 0; i < rs; i++) {
-                  for (let j = 0; j < cs; j++) {
-                      if (!grid[r + i]) grid[r + i] = [];
-                      grid[r + i][cIdx + j] = { cell, isOrigin: i === 0 && j === 0 };
-                  }
-              }
-              cIdx += cs;
-          }
-      }
-      return grid;
-  };
-
   const modifyTable = (action: string) => {
       const cell = getSelectedCell();
       if (!cell) { showToast("Click inside a table cell first!", "error"); return; }
@@ -329,26 +391,18 @@ const App = () => {
       const table = row.parentElement?.parentElement as HTMLTableElement;
       if (!table) return;
 
-      const grid = getTableGrid(table);
-      let rIdx = -1, cIdx = -1;
-      for(let r=0; r<grid.length; r++) {
-          for(let c=0; c<grid[r].length; c++) {
-              if (grid[r][c] && grid[r][c].cell === cell && grid[r][c].isOrigin) {
-                  rIdx = r; cIdx = c; break;
-              }
-          }
-          if (rIdx !== -1) break;
-      }
-
       if (action === 'addRow') {
           const newRow = table.insertRow(row.rowIndex + 1);
-          const colCount = grid[0].length;
-          for(let i=0; i<colCount; i++) {
+          // Insert matching number of cells based on current row
+          for(let i=0; i<row.cells.length; i++) {
               const newCell = newRow.insertCell();
               newCell.style.border = "1px solid #000"; newCell.innerHTML = "New";
           }
       } 
-      else if (action === 'delRow') { if (table.rows.length > 1) table.deleteRow(row.rowIndex); }
+      else if (action === 'delRow') { 
+          table.deleteRow(row.rowIndex); 
+          if (table.rows.length === 0) table.remove(); 
+      }
       else if (action === 'addCol') {
           for(let r=0; r<table.rows.length; r++) {
              const tr = table.rows[r];
@@ -356,32 +410,31 @@ const App = () => {
              newCell.style.border = "1px solid #000"; newCell.innerHTML = "New";
           }
       }
-      else if (action === 'delCol') { showToast("Column deletion restricted in complex tables.", "error"); }
+      else if (action === 'delCol') {
+          const cellIndex = cell.cellIndex;
+          for (let r=0; r<table.rows.length; r++) {
+              const tr = table.rows[r];
+              if (tr.cells.length > cellIndex) tr.deleteCell(cellIndex);
+          }
+          if (table.rows.length > 0 && table.rows[0].cells.length === 0) table.remove();
+      }
       else if (action === 'mergeRight') {
-          const cellSpan = cell.colSpan || 1;
-          const neighborX = cIdx + cellSpan;
-          if (neighborX < grid[rIdx].length) {
-              const neighbor = grid[rIdx][neighborX]?.cell;
-              if (neighbor && neighbor !== cell) {
-                  if ((cell.rowSpan || 1) === (neighbor.rowSpan || 1)) {
-                      cell.colSpan = (cell.colSpan || 1) + (neighbor.colSpan || 1);
-                      cell.innerHTML += " " + neighbor.innerHTML;
-                      neighbor.remove();
-                  } else showToast("Cannot merge cells of different heights.", "error");
-              }
+          const nextCell = cell.nextElementSibling as HTMLTableCellElement;
+          if (nextCell) {
+              cell.colSpan = (cell.colSpan || 1) + (nextCell.colSpan || 1);
+              cell.innerHTML += " " + nextCell.innerHTML;
+              nextCell.remove();
           }
       }
       else if (action === 'mergeDown') {
-          const cellSpan = cell.rowSpan || 1;
-          const neighborY = rIdx + cellSpan;
-          if (neighborY < grid.length) {
-              const neighbor = grid[neighborY][cIdx]?.cell;
-              if (neighbor && neighbor !== cell) {
-                  if ((cell.colSpan || 1) === (neighbor.colSpan || 1)) {
-                      cell.rowSpan = (cell.rowSpan || 1) + (neighbor.rowSpan || 1);
-                      cell.innerHTML += "<br/>" + neighbor.innerHTML;
-                      neighbor.remove();
-                  } else showToast("Cannot merge cells of different widths.", "error");
+          const nextRow = row.nextElementSibling as HTMLTableRowElement;
+          if (nextRow) {
+              // Simple logic for visual merging; complex logic is handled by Parser
+              const cellBelow = nextRow.cells[cell.cellIndex];
+              if (cellBelow) {
+                  cell.rowSpan = (cell.rowSpan || 1) + (cellBelow.rowSpan || 1);
+                  cell.innerHTML += "<br/>" + cellBelow.innerHTML;
+                  cellBelow.remove();
               }
           }
       }
@@ -412,8 +465,23 @@ const App = () => {
       parseTimeoutRef.current = null;
     }, 300);
   };
-
-  useEffect(() => { return () => { if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current); }; }, []);
+  
+  // DRAG AND DROP FIX: Force re-parse on drop
+  useEffect(() => {
+      const editor = editorRef.current;
+      if (!editor) return;
+      const observer = new MutationObserver(() => triggerParse());
+      observer.observe(editor, { childList: true, subtree: true, characterData: true, attributes: true });
+      
+      const handleDrop = (e: DragEvent) => {
+          setTimeout(triggerParse, 100); // Slight delay to allow DOM to settle
+      };
+      editor.addEventListener('drop', handleDrop);
+      return () => {
+          observer.disconnect();
+          editor.removeEventListener('drop', handleDrop);
+      };
+  }, []);
 
   const parseContentToPages = (root: HTMLElement) => {
     const ctx = document.createElement('canvas').getContext('2d')!;
@@ -426,41 +494,59 @@ const App = () => {
         return width;
     };
 
+    // --- ROBUST TABLE PARSER (2D Grid) ---
     const processTable = (tableEl: HTMLElement): TextSegment | null => {
         const rows = Array.from(tableEl.querySelectorAll('tr'));
         if (rows.length === 0) return null;
 
-        const grid: (HTMLTableCellElement | null)[][] = [];
-        const cellMap = new Map<HTMLTableCellElement, {r:number, c:number}>();
-        for(let r=0; r<rows.length; r++) grid[r] = [];
-
-        rows.forEach((tr, rIdx) => {
+        // 1. Calculate dimensions
+        let maxCols = 0;
+        rows.forEach(tr => {
             const cells = Array.from(tr.querySelectorAll('td, th'));
-            let cIdx = 0;
+            let colsInRow = 0;
+            cells.forEach(c => colsInRow += (c as HTMLTableCellElement).colSpan || 1);
+            if (colsInRow > maxCols) maxCols = colsInRow;
+        });
+
+        // 2. Build Grid
+        const grid: (HTMLTableCellElement | null)[][] = Array(rows.length).fill(null).map(() => Array(maxCols).fill(null));
+        const cellOrigins = new Map<HTMLTableCellElement, {r: number, c: number}>();
+
+        rows.forEach((tr, r) => {
+            const cells = Array.from(tr.querySelectorAll('td, th'));
+            let c = 0;
             cells.forEach((cell) => {
-                while (grid[rIdx][cIdx]) cIdx++;
                 const el = cell as HTMLTableCellElement;
+                // Find next empty slot
+                while (c < maxCols && grid[r][c] !== null) c++;
+                if (c >= maxCols) return;
+
                 const rs = el.rowSpan || 1;
                 const cs = el.colSpan || 1;
-                for(let r = 0; r < rs; r++) {
-                    for(let c = 0; c < cs; c++) {
-                        if (grid[rIdx + r]) grid[rIdx + r][cIdx + c] = (r===0 && c===0) ? el : null; 
+
+                // Mark grid slots
+                for (let i = 0; i < rs; i++) {
+                    for (let j = 0; j < cs; j++) {
+                        if (r + i < rows.length && c + j < maxCols) {
+                            grid[r + i][c + j] = el;
+                        }
                     }
                 }
-                cellMap.set(el, {r: rIdx, c: cIdx}); 
-                cIdx += cs;
+                cellOrigins.set(el, {r, c});
+                c += cs;
             });
         });
 
-        const maxCols = grid.reduce((max, row) => Math.max(max, row.length), 0);
+        // 3. Calculate Column Widths
         const colWidthsRaw = new Array(maxCols).fill(0);
-
-        cellMap.forEach((pos, el) => {
-             let text = el.innerText.trim();
-             const isBold = el.tagName === 'TH' || el.style.fontWeight === 'bold';
-             const fontStr = `${isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
-             const w = measureTextWithSpacing(text, fontStr, spacingFactor) + (20 * SCALE);
-             if (w > colWidthsRaw[pos.c]) colWidthsRaw[pos.c] = w;
+        cellOrigins.forEach((pos, el) => {
+            const text = el.innerText.trim();
+            const w = measureTextWithSpacing(text, `normal ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`, spacingFactor) + (20 * SCALE);
+            // Distribute width across spanned columns
+            const spanW = w / (el.colSpan || 1);
+            for(let k=0; k < (el.colSpan || 1); k++) {
+                if (spanW > colWidthsRaw[pos.c + k]) colWidthsRaw[pos.c + k] = spanW;
+            }
         });
 
         const MAX_TABLE_WIDTH = CANVAS_WIDTH - (MARGIN_X * 2);
@@ -471,33 +557,21 @@ const App = () => {
             for(let i=0; i<finalColWidths.length; i++) finalColWidths[i] *= ratio;
         }
 
+        // 4. Generate Render Data
         const tableRows: TableRow[] = [];
         for (let r = 0; r < rows.length; r++) {
             const rowData: (CellStyle | null)[] = [];
             for (let c = 0; c < maxCols; c++) {
                 const el = grid[r][c];
-                if (el) {
-                    const clone = el.cloneNode(true) as HTMLElement;
-                    clone.querySelectorAll('li').forEach(li => { li.prepend("• "); li.append("\n"); });
-                    let finalColor = el.style.color || el.getAttribute('color');
-                    if (!finalColor) {
-                        const sChild = el.querySelector('[color], [style*="color"]');
-                        if (sChild) finalColor = sChild.getAttribute('color') || (sChild as HTMLElement).style.color;
-                    }
-                    const isBold = el.tagName === 'TH' || el.style.fontWeight === 'bold' || !!el.querySelector('b, strong');
-                    const isUnderline = el.tagName === 'U' || el.style.textDecoration === 'underline' || !!el.querySelector('u');
-                    
-                    const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
-                    let align = 'left' as AlignType; 
-                    if (rawAlign === 'center') align = 'center';
-                    if (rawAlign === 'right') align = 'right';
-
-                    rowData.push({
-                        text: clone.innerText.trim(),
-                        color: finalColor || '#000000',
-                        isBold: !!isBold,
-                        isUnderline: !!isUnderline,
-                        align: align,
+                // Only add data if this is the top-left origin of the cell
+                const origin = el ? cellOrigins.get(el) : null;
+                if (el && origin && origin.r === r && origin.c === c) {
+                     rowData.push({
+                        text: el.innerText.trim(),
+                        color: '#000000',
+                        isBold: el.tagName === 'TH',
+                        isUnderline: false,
+                        align: 'left',
                         rowSpan: el.rowSpan || 1,
                         colSpan: el.colSpan || 1
                     });
@@ -507,13 +581,26 @@ const App = () => {
             }
             tableRows.push({ cells: rowData, maxHeight: CURRENT_LINE_HEIGHT * 1.2 });
         }
+
         return { type: 'table', tableData: { rows: tableRows, colWidths: finalColWidths, totalWidth: finalColWidths.reduce((a, b) => a + b, 0) } };
+    };
+
+    // --- CODE SPLITTER (Lines) ---
+    const processCodeLines = (preEl: HTMLElement) => {
+        const text = preEl.innerText;
+        if (!text) return;
+        const lines = text.split('\n');
+        lines.forEach(line => {
+             segments.push({ type: 'text', text: line, color: '#000000', isCodeLine: true });
+             segments.push({ type: 'text', text: '\n', isCodeLine: true }); // Ensure break
+        });
     };
 
     const traverse = (node: Node, style: { color: string, isBold: boolean, isUnderline: boolean }, listContext: { type: string, index: number } | null) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
         const tagName = el.tagName;
+        
         if (tagName === 'TABLE') {
             const tableSeg = processTable(el);
             if (tableSeg) segments.push(tableSeg);
@@ -524,6 +611,13 @@ const App = () => {
             segments.push({ type: 'image', src: imgEl.src, width: imgEl.width * SCALE || 200 * SCALE, height: imgEl.height * SCALE || 150 * SCALE });
             return;
         }
+        if (tagName === 'PRE') {
+            processCodeLines(el);
+            return;
+        }
+        // Skip empty BRs often left by drag-drop
+        if (tagName === 'BR' && !node.nextSibling && !node.previousSibling) return; 
+        
         const isBlock = ['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'TR'].includes(tagName);
         let newListContext = listContext;
         if (tagName === 'UL') newListContext = { type: 'ul', index: 0 };
@@ -531,6 +625,7 @@ const App = () => {
         let newColor = el.style.color || el.getAttribute('color') || style.color;
         const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || parseInt(el.style.fontWeight) > 600) || style.isBold;
         const newUnderline = (tagName === 'U' || el.style.textDecoration === 'underline') || style.isUnderline;
+        
         if (tagName === 'LI' && listContext) {
             const bullet = listContext.type === 'ul' ? "• " : `${listContext.index}. `;
             segments.push({ type: 'text', text: bullet, color: newColor, isBold: true }); 
@@ -569,39 +664,69 @@ const App = () => {
     let currentY = MARGIN_Y;
     let currentX = MARGIN_X;
     
-    const flushLine = (forceHeight?: number) => {
+    // --- ROBUST PAGINATION ---
+    const checkPageBreak = (neededHeight: number) => {
+        if (currentY + neededHeight > CANVAS_HEIGHT - MARGIN_Y) {
+            finalPages.push({ lines: currentLines });
+            currentLines = [];
+            currentY = MARGIN_Y; // Reset cleanly to top margin
+            return true;
+        }
+        return false;
+    };
+
+    const flushLine = () => {
+        if (currentLine.length === 0) return;
+        
+        // Calculate Line Height
+        let maxH = CURRENT_LINE_HEIGHT;
+        currentLine.forEach(s => {
+            if (s.type === 'image' && s.height) maxH = Math.max(maxH, s.height + 20);
+            if (s.type === 'table' && s.tableData) maxH = Math.max(maxH, s.tableData.rows.length * CURRENT_LINE_HEIGHT * 1.5);
+        });
+
+        checkPageBreak(maxH); // Push page if needed
+
         currentLines.push(currentLine);
         currentLine = [];
         currentX = MARGIN_X;
-        currentY += forceHeight ? forceHeight + 10 : CURRENT_LINE_HEIGHT; 
-        if (currentY > CANVAS_HEIGHT - MARGIN_Y) {
-            finalPages.push({ lines: currentLines });
-            currentLines = [];
-            currentY = MARGIN_Y;
-        }
+        currentY += maxH; 
     };
 
     segments.forEach(seg => {
       if (seg.text === '\n') { flushLine(); return; }
+      
       if (seg.type === 'table' || seg.type === 'image') {
           if (currentLine.length > 0) flushLine();
-          const height = seg.type === 'table' ? (seg.tableData!.rows.length * (CURRENT_LINE_HEIGHT * 1.2)) + 20 : seg.height! + 20;
-          if (currentY + height > CANVAS_HEIGHT - MARGIN_Y) {
-             finalPages.push({ lines: currentLines });
-             currentLines = [];
-             currentY = MARGIN_Y;
-          }
+          
+          let height = 0;
+          if (seg.type === 'table') height = (seg.tableData!.rows.length * (CURRENT_LINE_HEIGHT * 1.2)) + 20;
+          else if (seg.type === 'image') height = seg.height! + 20;
+
+          checkPageBreak(height);
+          
           currentLines.push([seg]); 
           currentY += height;
           return;
       }
+      
       if (seg.type === 'text') {
+        // If it's a code line, we might need to handle indentation visually in renderer
+        // For text wrapping:
         const words = seg.text!.split(/(\s+)/); 
         words.forEach(word => {
             if (word === "") return;
-            ctx.font = `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+            // Handle Code indentation preservation
+            const effectiveFont = seg.isCodeLine 
+                ? `normal ${CURRENT_FONT_SIZE}px monospace` 
+                : `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+            
+            ctx.font = effectiveFont;
             const wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
-            if (currentX + wordWidth > CANVAS_WIDTH - MARGIN_X) flushLine();
+            
+            if (currentX + wordWidth > CANVAS_WIDTH - MARGIN_X) {
+                flushLine();
+            }
             currentLine.push({ ...seg, text: word, width: wordWidth });
             currentX += wordWidth; 
         });
@@ -655,20 +780,30 @@ const App = () => {
       pageData.lines.forEach(line => {
         let cursorX = MARGIN_X;
         let maxLineHeight = CURRENT_LINE_HEIGHT;
+        let isCodeBlockLine = false;
 
         let dominantAlign: AlignType = 'left';
-        
         let lineTextWidth = 0;
         line.forEach(seg => {
+            if (seg.isCodeLine) isCodeBlockLine = true;
             if (seg.type === 'text' && seg.width) {
                 lineTextWidth += seg.width;
-                if (seg.align) {
-                    dominantAlign = seg.align as AlignType;
-                }
+                if (seg.align) dominantAlign = seg.align as AlignType;
             }
         });
-        const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
         
+        // --- DRAW CODE LEFT BORDER ---
+        if (isCodeBlockLine) {
+            ctx.beginPath();
+            ctx.strokeStyle = "#000";
+            ctx.lineWidth = 3 * SCALE;
+            ctx.moveTo(MARGIN_X, cursorY);
+            ctx.lineTo(MARGIN_X, cursorY + CURRENT_LINE_HEIGHT);
+            ctx.stroke();
+            cursorX += 15 * SCALE; // Indent for code
+        }
+
+        const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
         if ((dominantAlign as string) === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
         else if ((dominantAlign as string) === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
@@ -680,9 +815,10 @@ const App = () => {
                const drawH = seg.height || (100 * SCALE);
                img.onload = () => {
                  ctx.drawImage(img, cursorX, cursorY, drawW, drawH);
-                 ctx.fillStyle = "rgba(255,255,255,0.6)";
-                 ctx.fillRect(cursorX - 5, cursorY - 5, 30, 10);
-                 ctx.fillRect(cursorX + drawW - 25, cursorY - 5, 30, 10);
+                 // Selection handles
+                 ctx.fillStyle = "rgba(59, 130, 246, 0.5)";
+                 ctx.fillRect(cursorX - 5, cursorY - 5, 10, 10);
+                 ctx.fillRect(cursorX + drawW - 5, cursorY + drawH - 5, 10, 10);
                };
                img.src = seg.src;
                maxLineHeight = drawH + 20;
@@ -702,10 +838,7 @@ const App = () => {
                            if (cell.rowSpan > 1) fullHeight = rowHeight * cell.rowSpan;
 
                            ctx.beginPath(); ctx.strokeStyle = "#444"; ctx.lineWidth = 1.5;
-                           ctx.moveTo(tableX, tableY); ctx.lineTo(tableX + fullWidth, tableY); 
-                           ctx.moveTo(tableX, tableY + fullHeight); ctx.lineTo(tableX + fullWidth, tableY + fullHeight); 
-                           ctx.moveTo(tableX, tableY); ctx.lineTo(tableX, tableY + fullHeight); 
-                           ctx.moveTo(tableX + fullWidth, tableY); ctx.lineTo(tableX + fullWidth, tableY + fullHeight); 
+                           ctx.rect(tableX, tableY, fullWidth, fullHeight);
                            ctx.stroke();
 
                            ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
@@ -719,7 +852,6 @@ const App = () => {
                            if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE);
 
                            const rY = (rng() - 0.5) * (skewFactor * SCALE);
-                           
                            let currentX = textX;
                            for (const char of cell.text) {
                                const rRot = (rng() - 0.5) * (skewFactor * 0.15);
@@ -729,13 +861,6 @@ const App = () => {
                                ctx.fillText(char, 0, 0); 
                                ctx.restore();
                                currentX += ctx.measureText(char).width + (spacingFactor * SCALE);
-                           }
-                           
-                           if (cell.isUnderline) {
-                               ctx.beginPath(); ctx.strokeStyle = cell.color; ctx.lineWidth = 1.5;
-                               ctx.moveTo(textX, tableY + (rowHeight*0.6) + 5);
-                               ctx.lineTo(textX + textWidth, tableY + (rowHeight*0.6) + 5 + (rng()*2));
-                               ctx.stroke();
                            }
                        }
                        tableX += cellWidth;
@@ -764,20 +889,28 @@ const App = () => {
         cursorY += maxLineHeight;
       });
 
+      // --- RENDER DRAWINGS ---
+      const pageDrawings = drawings[index] || [];
+      if (pageDrawings.length > 0) {
+          pageDrawings.forEach(stroke => renderSmoothStroke(ctx, stroke));
+      }
+
+      // --- SCANNER EFFECT (Preview) ---
       if (scanEffect) {
           const grad = ctx.createLinearGradient(0, 0, 100 * SCALE, 0);
-          grad.addColorStop(0, "rgba(0,0,0,0.12)");
+          grad.addColorStop(0, "rgba(0,0,0,0.1)");
           grad.addColorStop(1, "rgba(0,0,0,0)");
           ctx.fillStyle = grad;
           ctx.fillRect(0,0, 100 * SCALE, CANVAS_HEIGHT);
       }
     });
-  }, [pages, skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor]);
+  }, [pages, skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings]);
 
   const saveProject = () => {
       const project: ProjectFile = {
-          version: '17.0',
+          version: '18.2',
           htmlContent: editorRef.current?.innerHTML || '',
+          drawings: drawings,
           settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
       };
       const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
@@ -800,24 +933,72 @@ const App = () => {
               setScanEffect(project.settings.scanEffect); setBaseFontSize(project.settings.fontSize || 22);
               setPaperType(project.settings.paperType || 'lined'); setActiveFontIndex(project.settings.activeFontIndex || 0);
               setSpacingFactor(project.settings.spacing || 0);
+              if (project.drawings) setDrawings(project.drawings);
               triggerParse();
-              showToast("Project loaded successfully!", "success");
+              showToast("Loaded successfully!", "success");
           } catch (err) { showToast("Invalid project file.", "error"); }
       };
       reader.readAsText(file);
   };
 
+  const processScanEffect = (originalCanvas: HTMLCanvasElement): string => {
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = originalCanvas.width;
+      tempCanvas.height = originalCanvas.height;
+      const tCtx = tempCanvas.getContext('2d')!;
+      
+      // Draw original
+      tCtx.drawImage(originalCanvas, 0, 0);
+      
+      const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+      const data = imgData.data;
+
+      // Apply High Contrast & Noise
+      for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          
+          let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+          if (gray > 180) gray = 255; 
+          else gray = gray * 0.8; 
+
+          // Heavier Noise for PDF Export to prevent OCR
+          const noise = (Math.random() - 0.5) * 40;
+          gray += noise;
+
+          data[i] = gray;
+          data[i + 1] = gray;
+          data[i + 2] = gray;
+      }
+      tCtx.putImageData(imgData, 0, 0);
+      return tempCanvas.toDataURL('image/jpeg', 0.6); 
+  };
+
   const downloadPDF = () => {
     const doc = new jsPDF('p', 'pt', [A4_WIDTH, A4_HEIGHT]);
-    pages.forEach((_, i) => {
-      const canvas = canvasRefs.current[i];
-      if (canvas) {
-        if (i > 0) doc.addPage();
-        doc.addImage(canvas.toDataURL('image/jpeg', 0.8), 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT); 
-      }
-    });
-    doc.save('assignment.pdf');
-    showToast("PDF Downloaded!", "success");
+    showToast("Generating PDF...", "info");
+    
+    setTimeout(() => {
+        pages.forEach((_, i) => {
+            const canvas = canvasRefs.current[i];
+            if (canvas) {
+                if (i > 0) doc.addPage();
+                
+                let imgData;
+                if (scanEffect) {
+                    imgData = processScanEffect(canvas);
+                    // Slight Rotation to break OCR
+                    doc.addImage(imgData, 'JPEG', -5, 0, A4_WIDTH + 10, A4_HEIGHT, undefined, 'FAST', 0.5); 
+                } else {
+                    imgData = canvas.toDataURL('image/jpeg', 0.8);
+                    doc.addImage(imgData, 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT); 
+                }
+            }
+        });
+        doc.save('assignment.pdf');
+        showToast("PDF Downloaded!", "success");
+    }, 100);
   };
 
   useEffect(() => {
@@ -865,8 +1046,8 @@ const App = () => {
             <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
                <span className="text-blue-600 text-2xl sm:text-3xl">😴</span> 
                <span>LazyScript</span>
-               <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v17.6</span>
-               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2">Processing...</span>}
+               <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v18.2</span>
+               {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
             </h1>
 
             {/* Header Actions */}
@@ -907,41 +1088,39 @@ const App = () => {
              <div className="flex flex-wrap gap-3 justify-between items-center">
                  <div className="flex flex-wrap gap-2 items-center">
                     <div className={`flex rounded-md overflow-hidden border ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
-                        {['#000000', '#000f55', '#cc0000', '#1a5c20'].map(c => ( <button key={c} onClick={() => applyFormat('foreColor', c)} className="w-8 h-8 hover:opacity-80 transition-opacity" style={{backgroundColor: c}} title="Ink Color" /> ))}
+                        {['#000000', '#000f55', '#cc0000', '#1a5c20'].map(c => ( <button key={c} onMouseDown={preventFocusLoss} onClick={() => applyFormat('foreColor', c)} className="w-8 h-8 hover:opacity-80 transition-opacity" style={{backgroundColor: c}} title="Ink Color" /> ))}
                     </div>
-                    <div className={`w-px h-6 mx-1 ${isDarkMode ? 'bg-slate-600' : 'bg-slate-300'}`}></div>
-                    <button onClick={() => applyFormat('bold')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Bold"><Bold size={18}/></button>
-                    <button onClick={() => applyFormat('underline')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Underline"><Underline size={18}/></button>
+                    <div className={`w-px h-6 mx-1 ${isDarkMode ? 'bg-slate-600' : 'bg-slate-300'} hidden sm:block`}></div>
+                    <button onMouseDown={preventFocusLoss} onClick={() => applyFormat('bold')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Bold"><Bold size={18}/></button>
+                    <button onMouseDown={preventFocusLoss} onClick={() => applyFormat('underline')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Underline"><Underline size={18}/></button>
                     
-                    {/* NEW: AI BUTTON */}
-                    <button onClick={copyAIPrompt} className="p-2 rounded bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors ml-2 flex gap-1 items-center font-bold text-xs" title="Copy AI Prompt"><Bot size={16}/> AI Prompt</button>
+                    <button onMouseDown={preventFocusLoss} onClick={() => setIsDrawingMode(!isDrawingMode)} className={`p-2 rounded transition-colors ml-2 ${isDrawingMode ? 'bg-blue-600 text-white shadow-md transform scale-105' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="Toggle Pen Mode"><PenTool size={16}/></button>
+                    <button onMouseDown={preventFocusLoss} onClick={undoDrawing} className="p-2 rounded hover:bg-slate-100 text-slate-600" title="Undo Last Stroke"><Undo2 size={16}/></button>
+
+                    <button onMouseDown={preventFocusLoss} onClick={copyAIPrompt} className="p-2 rounded bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors ml-2 flex gap-1 items-center font-bold text-xs" title="Copy AI Prompt"><Bot size={16}/> Prompt</button>
+                    <button onMouseDown={preventFocusLoss} onClick={pasteAIHtml} className="p-2 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors ml-1 flex gap-1 items-center font-bold text-xs" title="Paste AI HTML Code"><FilePlus size={16}/> Paste AI</button>
                     
-{/* NEW PASTE BUTTON */}
-<button onClick={pasteAIHtml} className="p-2 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors ml-1 flex gap-1 items-center font-bold text-xs" title="Paste AI HTML Code"><FilePlus size={16}/> Paste AI</button>
-                    {/* NEW: CLEAR BUTTON (3 Stage) */}
-                    <button onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Clear Canvas">
-                        {clearConfirmStage === 0 ? <><Trash2 size={16}/></> : clearConfirmStage === 1 ? "Clear?" : "Really??"}
-                    </button>
+                    
                  </div>
                  
                  <div className="flex gap-2 items-center mt-2 sm:mt-0">
                     <div className="relative case-selector">
-                        <button onClick={() => setIsCaseMenuOpen(!isCaseMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                        <button onMouseDown={preventFocusLoss} onClick={() => setIsCaseMenuOpen(!isCaseMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
                             <ArrowUpNarrowWide size={14}/> 
                             <span className="hidden sm:inline">Case</span>
                             <ChevronDown size={12} className="opacity-50"/>
                         </button>
                         {isCaseMenuOpen && (
                             <div className="absolute top-full left-0 mt-2 w-32 bg-white border rounded-lg shadow-xl z-50 overflow-hidden py-1">
-                                <button onClick={() => changeCase('upper')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseUpper size={14}/> UPPER</button>
-                                <button onClick={() => changeCase('lower')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseLower size={14}/> lower</button>
-                                <button onClick={() => changeCase('title')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseSensitive size={14}/> Title</button>
+                                <button onMouseDown={preventFocusLoss} onClick={() => changeCase('upper')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseUpper size={14}/> UPPER</button>
+                                <button onMouseDown={preventFocusLoss} onClick={() => changeCase('lower')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseLower size={14}/> lower</button>
+                                <button onMouseDown={preventFocusLoss} onClick={() => changeCase('title')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseSensitive size={14}/> Title</button>
                             </div>
                         )}
                     </div>
 
                     <div className="relative font-selector">
-                        <button onClick={() => setIsFontMenuOpen(!isFontMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                        <button onMouseDown={preventFocusLoss} onClick={() => setIsFontMenuOpen(!isFontMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
                             <FontIcon size={14}/> 
                             <span className="max-w-[80px] truncate">{CURRENT_FONT.label}</span>
                             <ChevronDown size={12} className="opacity-50"/>
@@ -949,7 +1128,7 @@ const App = () => {
                         {isFontMenuOpen && (
                             <div className="absolute top-full left-0 mt-2 w-48 bg-white border rounded-lg shadow-xl z-50 overflow-hidden py-1">
                                 {FONT_OPTIONS.map((f, idx) => (
-                                    <button key={f.id} onClick={() => { setActiveFontIndex(idx); setIsFontMenuOpen(false); }} className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between group ${activeFontIndex === idx ? 'bg-blue-50 text-blue-600' : 'text-slate-700'}`}>
+                                    <button key={f.id} onMouseDown={preventFocusLoss} onClick={() => { setActiveFontIndex(idx); setIsFontMenuOpen(false); }} className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between group ${activeFontIndex === idx ? 'bg-blue-50 text-blue-600' : 'text-slate-700'}`}>
                                         <span style={{ fontFamily: f.family }}>{f.label}</span>
                                         {activeFontIndex === idx && <div className="w-1.5 h-1.5 rounded-full bg-blue-600"></div>}
                                     </button>
@@ -958,58 +1137,57 @@ const App = () => {
                         )}
                     </div>
 
-                    <button onClick={deleteSelectedImage} className={`p-2 rounded border hover:bg-red-100 text-red-500 ${isDarkMode ? 'border-slate-600 hover:bg-red-900' : 'border-slate-200'} ${selectedImage ? 'ring-2 ring-red-400' : ''}`} title="Delete Selected Image"><ImageMinus size={18}/></button>
+                    <button onMouseDown={preventFocusLoss} onClick={deleteSelectedImage} className={`p-2 rounded border hover:bg-red-100 text-red-500 ${isDarkMode ? 'border-slate-600 hover:bg-red-900' : 'border-slate-200'} ${selectedImage ? 'ring-2 ring-red-400' : ''}`} title="Delete Selected Item"><Delete size={18}/></button>
                     <label className={`p-2 rounded border cursor-pointer hover:bg-opacity-10 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-white' : 'border-slate-200 text-slate-700 hover:bg-black'}`} title="Insert Image"><ImageIcon size={18}/><input type="file" onChange={insertImage} className="hidden"/></label>
+                    <button onMouseDown={preventFocusLoss} onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Reset/New Page">
+                        {clearConfirmStage === 0 ? <><RefreshCw size={16}/></> : clearConfirmStage === 1 ? "New Page?" : "Really??"}
+                    </button>
                  </div>
              </div>
 
              <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100 flex-wrap">
                 <span className="text-xs font-bold text-blue-800 px-2">Table:</span>
-                <button onClick={insertTable} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="New Table"><TableIcon size={16}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={insertTable} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="New Table"><TableIcon size={16}/></button>
                 <div className="w-px h-4 bg-blue-200"></div>
-                <button onClick={() => modifyTable('addRow')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Row"><Rows size={14}/><Plus size={10}/></button>
-                <button onClick={() => modifyTable('delRow')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Row"><Rows size={14}/><Trash2 size={10}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('addRow')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Row"><Rows size={14}/><Plus size={10}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('delRow')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Row"><Rows size={14}/><Trash2 size={10}/></button>
                 <div className="w-px h-4 bg-blue-200"></div>
-                <button onClick={() => modifyTable('addCol')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Col"><Columns size={14}/><Plus size={10}/></button>
-                <button onClick={() => modifyTable('delCol')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Col"><Columns size={14}/><Trash2 size={10}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('addCol')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Col"><Columns size={14}/><Plus size={10}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('delCol')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Col"><Columns size={14}/><Trash2 size={10}/></button>
                 <div className="w-px h-4 bg-blue-200"></div>
-                <button onClick={() => modifyTable('mergeRight')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Right"><ArrowRightFromLine size={14}/></button>
-                <button onClick={() => modifyTable('mergeDown')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Down"><ArrowDownFromLine size={14}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('mergeRight')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Right"><ArrowRightFromLine size={14}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('mergeDown')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Down"><ArrowDownFromLine size={14}/></button>
                 <div className="w-px h-4 bg-blue-200"></div>
-                <button onClick={() => applyAlignment('left')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Left"><AlignLeft size={14}/></button>
-                <button onClick={() => applyAlignment('center')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Center"><AlignCenter size={14}/></button>
-                <button onClick={() => applyAlignment('right')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Right"><AlignRight size={14}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('left')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Left"><AlignLeft size={14}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('center')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Center"><AlignCenter size={14}/></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('right')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Right"><AlignRight size={14}/></button>
              </div>
 
              <div className="grid grid-cols-2 gap-6 pt-2">
                 <div className="space-y-3">
                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Messiness</span> <span>{skewFactor}</span></div>
                     <input type="range" min="0" max="3" step="0.5" value={skewFactor} onChange={(e) => setSkewFactor(parseFloat(e.target.value))} />
-                    
                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{baseFontSize}px</span></div>
                     <input type="range" min="14" max="32" step="1" value={baseFontSize} onChange={(e) => setBaseFontSize(parseInt(e.target.value))} />
                 </div>
-                
                 <div className="space-y-3">
-                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{spacingFactor}px</span></div>
-                     <input type="range" min="-2" max="10" step="0.5" value={spacingFactor} onChange={(e) => setSpacingFactor(parseFloat(e.target.value))} />
-
-                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Line Opacity</span> <span>{Math.round(lineOpacity*100)}%</span></div>
-                     <input type="range" min="0" max="1" step="0.1" value={lineOpacity} onChange={(e) => setLineOpacity(parseFloat(e.target.value))} />
-                    
+                      <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{spacingFactor}px</span></div>
+                      <input type="range" min="-2" max="10" step="0.5" value={spacingFactor} onChange={(e) => setSpacingFactor(parseFloat(e.target.value))} />
+                      <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Line Opacity</span> <span>{Math.round(lineOpacity*100)}%</span></div>
+                      <input type="range" min="0" max="1" step="0.1" value={lineOpacity} onChange={(e) => setLineOpacity(parseFloat(e.target.value))} />
                     <div className="flex gap-2 pt-1">
-                        <button onClick={() => setPaperType(prev => prev === 'lined' ? 'grid' : prev === 'grid' ? 'blank' : 'lined')} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>
+                        <button onMouseDown={preventFocusLoss} onClick={() => setPaperType(prev => prev === 'lined' ? 'grid' : prev === 'grid' ? 'blank' : 'lined')} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>
                              {paperType === 'lined' ? <><AlignJustify size={14}/> Lined</> : paperType === 'grid' ? <><Grid3X3 size={14}/> Grid</> : <><Type size={14}/> Blank</>}
                         </button>
-                        <button onClick={() => setScanEffect(!scanEffect)} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${scanEffect ? 'bg-blue-600 text-white border-blue-600' : (isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100')}`}>
-                             <ScanLine size={14}/> {scanEffect ? 'Scanner ON' : 'Scanner OFF'}
+                        <button onMouseDown={preventFocusLoss} onClick={() => setScanEffect(!scanEffect)} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${scanEffect ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : (isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100')}`}>
+                             <ScanLine size={14}/> {scanEffect ? 'Scanner ON' : 'Scanner'}
                         </button>
                     </div>
                 </div>
              </div>
           </div>
           <div className="flex-1 overflow-y-auto bg-white text-slate-900 relative" onClick={handleEditorClick}>
-             <div ref={editorRef} contentEditable onInput={triggerParse} className="min-h-full p-8 outline-none font-sans text-lg leading-relaxed"></div>
+             <div ref={editorRef} contentEditable className="min-h-full p-8 outline-none font-sans text-lg leading-relaxed"></div>
           </div>
         </div>
         
@@ -1017,7 +1195,16 @@ const App = () => {
            {pages.map((_, i) => (
              <div key={i} className="relative group shrink-0 max-w-full">
                <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i+1}</span>
-               <canvas ref={el => { canvasRefs.current[i] = el; }} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} className="bg-white shadow-2xl rounded-sm transition-transform duration-300 hover:scale-[1.02] max-w-full h-auto" />
+               <canvas 
+                  ref={el => { canvasRefs.current[i] = el; }} 
+                  width={CANVAS_WIDTH} 
+                  height={CANVAS_HEIGHT} 
+                  className={`bg-white shadow-2xl rounded-sm transition-transform duration-300 max-w-full h-auto ${isDrawingMode ? 'cursor-crosshair touch-none' : 'hover:scale-[1.02]'}`}
+                  onPointerDown={(e) => startDrawing(i, e)}
+                  onPointerMove={(e) => drawMove(i, e)}
+                  onPointerUp={(e) => stopDrawing(i, e)}
+                  onPointerLeave={(e) => stopDrawing(i, e)}
+               />
              </div>
            ))}
         </div>
