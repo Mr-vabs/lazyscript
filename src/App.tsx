@@ -1029,7 +1029,7 @@ const App = () => {
       </style>
 
       {/* TOAST NOTIFICATIONS */}
-      <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
+      <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
           {toasts.map(toast => (
               <div key={toast.id} className={`pointer-events-auto px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium flex items-center gap-2 animate-[slideUp_0.3s_ease-out] ${toast.type === 'error' ? 'bg-red-500' : toast.type === 'success' ? 'bg-green-500' : 'bg-slate-800'}`}>
                   {toast.type === 'success' && <span>✅</span>}
