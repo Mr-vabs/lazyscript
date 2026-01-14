@@ -93,7 +93,50 @@ Since this is a private repo, connect your GitHub account to Netlify:
 
 ## 📜 Full Changelog
 
-### Changelog v17.0 (Current)
+### 🚀 Changelog v18.2 (Current)
+
+#### 🔥 Critical Fixes & Logic
+- **Matrix Table Algorithm:** Replaced the simple table parser with a robust **2D Grid System**. This fixes alignment issues when using complex `rowSpan` and `colSpan` combinations.
+- **Code Block Pagination:** Code blocks now split cleanly across pages instead of bunching up or getting cut off.
+- **Ghost Image Fix:** Added a `MutationObserver` with cleanup logic to prevent invisible “ghost” empty spaces when dragging and dropping images.
+
+#### ✨ Enhancements
+- **Advanced Anti-OCR:** The PDF exporter now applies a heavy noise filter and rotates the entire page by **0.5°**, preventing PDF readers from selecting text and ensuring a flat scanned-image look.
+- **UI Updates:**
+  - Swapped **Delete Image** icon → **Backspace**
+  - Swapped **Clear Canvas** → **Refresh / New Page**
+- **Pagination Logic:** Improved `flushLine` handling to prevent gaps at the bottom of pages when font sizes change dynamically.
+
+---
+
+### 🧪 Changelog v18.1
+
+#### 🆕 New Features
+- **Code Block Support:** Added a parser for `<pre>` tags. Code now renders with:
+  - A distinct left-side vertical border
+  - Preserved indentation and spacing
+- **Scanner Mode V1:** Introduced the **Xerox Effect** (High Contrast + Grayscale) for PDF exports.
+
+#### 🛠 Improvements
+- **Image Positioning:** Fixed a bug where inserting an image would always place it at the end of the text. Images now correctly respect the cursor position.
+- **Table Columns:** Added specific logic to handle **Column Deletion** correctly without breaking layout.
+
+---
+
+### 🎨 Changelog v18.0
+
+#### 🌟 Major Feature — Drawing Mode
+- **Pen Tool:** Added a toggle to switch between **Text Mode** and **Drawing Mode**.
+- **Bezier Curves:** Implemented smooth stroke rendering for natural-looking digital ink.
+- **Undo System:** Added **Undo2** functionality specifically optimized for drawing strokes.
+- **Ink Sync:** Drawing color now syncs automatically with the selected **Text Color**.
+
+#### 📱 Mobile & UI
+- **Responsive Header:** Fixed z-index and padding issues to ensure the header doesn’t overlap the paper on mobile devices.
+- **Toolbar Wrap:** Toolbar buttons now wrap gracefully on smaller screens.
+- **Paste AI:** Added a button to parse **HTML directly from the system clipboard**.
+
+### Changelog v17.0
 
 #### New Features
 * **AI Integration:** Added a **Robot Icon** 🤖 to the toolbar to copy the specialized AI system prompt.

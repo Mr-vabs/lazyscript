@@ -473,7 +473,7 @@ const App = () => {
       const observer = new MutationObserver(() => triggerParse());
       observer.observe(editor, { childList: true, subtree: true, characterData: true, attributes: true });
       
-      const handleDrop = (e: DragEvent) => {
+      const handleDrop = (_e: DragEvent) => {
           setTimeout(triggerParse, 100); // Slight delay to allow DOM to settle
       };
       editor.addEventListener('drop', handleDrop);
