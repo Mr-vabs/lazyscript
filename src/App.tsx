@@ -82,7 +82,7 @@ type AlignType = 'left' | 'center' | 'right';
 
 type CellStyle = { 
     text: string; color: string; isBold: boolean; isUnderline: boolean; align: AlignType;
-    rowSpan: number; colSpan: number; 
+    rowSpan: number; colSpan: number; lines?: string[];
 };
 type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number }; 
 type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
@@ -466,6 +466,13 @@ const App = () => {
     }, 300);
   };
   
+  // Re-parse when layout-affecting settings change (Issue #2)
+  useEffect(() => {
+      if (pages.length > 0) {
+          triggerParse();
+      }
+  }, [baseFontSize, spacingFactor, activeFontIndex]);
+
   // DRAG AND DROP FIX: Force re-parse on drop
   useEffect(() => {
       const editor = editorRef.current;
@@ -561,25 +568,58 @@ const App = () => {
         const tableRows: TableRow[] = [];
         for (let r = 0; r < rows.length; r++) {
             const rowData: (CellStyle | null)[] = [];
+            let rowMaxHeight = CURRENT_LINE_HEIGHT * 1.2;
             for (let c = 0; c < maxCols; c++) {
                 const el = grid[r][c];
                 // Only add data if this is the top-left origin of the cell
                 const origin = el ? cellOrigins.get(el) : null;
                 if (el && origin && origin.r === r && origin.c === c) {
+                     const text = el.innerText.trim();
+                     const rs = el.rowSpan || 1;
+                     const cs = el.colSpan || 1;
+
+                     let fullWidth = 0;
+                     for(let k=0; k < cs; k++) {
+                         if (c+k < maxCols) fullWidth += finalColWidths[c+k];
+                     }
+
+                     const wrappedLines: string[] = [];
+                     const words = text.split(/(\s+)/);
+                     let currentLine = "";
+                     words.forEach(word => {
+                         if(word === "") return;
+                         const testLine = currentLine + word;
+                         const testWidth = measureTextWithSpacing(testLine, `normal ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`, spacingFactor);
+                         if(testWidth > fullWidth - (20 * SCALE) && currentLine !== "") {
+                             wrappedLines.push(currentLine.trim());
+                             currentLine = word;
+                         } else {
+                             currentLine = testLine;
+                         }
+                     });
+                     if(currentLine.trim() !== "") wrappedLines.push(currentLine.trim());
+
+                     const cellHeight = (wrappedLines.length > 0 ? wrappedLines.length : 1) * CURRENT_LINE_HEIGHT * 1.2;
+                     // Only affect current row height if rowspan is 1 (rough approximation)
+                     if (rs === 1 && cellHeight > rowMaxHeight) {
+                         rowMaxHeight = cellHeight;
+                     }
+
                      rowData.push({
-                        text: el.innerText.trim(),
+                        text: text,
+                        lines: wrappedLines.length > 0 ? wrappedLines : [text],
                         color: '#000000',
                         isBold: el.tagName === 'TH',
                         isUnderline: false,
                         align: 'left',
-                        rowSpan: el.rowSpan || 1,
-                        colSpan: el.colSpan || 1
+                        rowSpan: rs,
+                        colSpan: cs
                     });
                 } else {
                     rowData.push(null);
                 }
             }
-            tableRows.push({ cells: rowData, maxHeight: CURRENT_LINE_HEIGHT * 1.2 });
+            tableRows.push({ cells: rowData, maxHeight: rowMaxHeight });
         }
 
         return { type: 'table', tableData: { rows: tableRows, colWidths: finalColWidths, totalWidth: finalColWidths.reduce((a, b) => a + b, 0) } };
@@ -843,25 +883,42 @@ const App = () => {
 
                            ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
                            ctx.fillStyle = cell.color;
-                           
-                           let textWidth = 0;
-                           for (const char of cell.text) textWidth += ctx.measureText(char).width + (spacingFactor * SCALE);
+                           ctx.strokeStyle = cell.color;
+                           ctx.lineWidth = 0.5;
 
-                           let textX = tableX + (10*SCALE);
-                           if (cell.align === 'center') textX = tableX + (fullWidth/2) - (textWidth/2);
-                           if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE);
+                           const lines = cell.lines || [cell.text];
+                           const lineHeight = CURRENT_LINE_HEIGHT * 1.2;
+                           let startY = tableY + (rowHeight / 2) - ((lines.length * lineHeight) / 2) + (lineHeight * 0.6);
 
-                           const rY = (rng() - 0.5) * (skewFactor * SCALE);
-                           let currentX = textX;
-                           for (const char of cell.text) {
-                               const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-                               ctx.save(); 
-                               ctx.translate(currentX, tableY + (rowHeight*0.6) + rY); 
-                               ctx.rotate(rRot); 
-                               ctx.fillText(char, 0, 0); 
-                               ctx.restore();
-                               currentX += ctx.measureText(char).width + (spacingFactor * SCALE);
-                           }
+                           lines.forEach((line) => {
+                               let textWidth = 0;
+                               for (const char of line) textWidth += ctx.measureText(char).width + (spacingFactor * SCALE);
+
+                               let textX = tableX + (10*SCALE);
+                               if (cell.align === 'center') textX = tableX + (fullWidth/2) - (textWidth/2);
+                               if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE);
+
+                               let currentX = textX;
+                               for (const char of line) {
+                                   const rY = (rng() - 0.5) * (skewFactor * SCALE);
+                                   const rRot = (rng() - 0.5) * (skewFactor * 0.15);
+                                   const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
+                                   const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
+
+                                   ctx.save();
+                                   ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+                                   ctx.translate(currentX, startY + rY);
+                                   ctx.rotate(rRot);
+                                   ctx.scale(rScaleX, rScaleY);
+                                   ctx.fillText(char, 0, 0);
+                                   if (skewFactor > 1 && rng() > 0.5) {
+                                       ctx.strokeText(char, 0, 0);
+                                   }
+                                   ctx.restore();
+                                   currentX += ctx.measureText(char).width + (spacingFactor * SCALE);
+                               }
+                               startY += lineHeight;
+                           });
                        }
                        tableX += cellWidth;
                    });
@@ -872,12 +929,27 @@ const App = () => {
            else if (seg.type === 'text' && seg.text) {
               ctx.font = `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
               ctx.fillStyle = seg.color || '#000';
+              ctx.strokeStyle = seg.color || '#000';
+              ctx.lineWidth = 0.5;
               for (let i = 0; i < seg.text.length; i++) {
                 const char = seg.text[i];
                 const charWidth = ctx.measureText(char).width;
                 const rY = (rng() - 0.5) * (skewFactor * SCALE);
                 const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-                ctx.save(); ctx.translate(cursorX + charWidth/2, cursorY + rY); ctx.rotate(rRot); ctx.fillText(char, -charWidth/2, 0); ctx.restore();
+                const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
+                const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
+
+                ctx.save();
+                ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+                ctx.translate(cursorX + charWidth/2, cursorY + rY);
+                ctx.rotate(rRot);
+                ctx.scale(rScaleX, rScaleY);
+                ctx.fillText(char, -charWidth/2, 0);
+                if (skewFactor > 1 && rng() > 0.5) {
+                    ctx.strokeText(char, -charWidth/2, 0);
+                }
+                ctx.restore();
+
                 if (seg.isUnderline) {
                     ctx.beginPath(); ctx.strokeStyle = seg.color || '#000'; ctx.lineWidth = 1.5;
                     ctx.moveTo(cursorX, cursorY + 5); ctx.lineTo(cursorX + charWidth, cursorY + 5 + (rng()*2)); ctx.stroke();
