@@ -16,8 +16,6 @@ const A4_WIDTH = 595;
 const A4_HEIGHT = 842;
 const CANVAS_WIDTH = A4_WIDTH * SCALE;
 const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
-const MARGIN_X = 50 * SCALE;
-const MARGIN_Y = 60 * SCALE;
 
 // --- CONTENT TEMPLATES ---
 const DEFAULT_CONTENT = `
@@ -117,6 +115,27 @@ const App = () => {
   const [scanEffect, setScanEffect] = useState(false);
   const [lineOpacity, setLineOpacity] = useState(0.4); 
   const [baseFontSize, setBaseFontSize] = useState(18);
+
+  // UI Debounce State
+  const [uiSkewFactor, setUiSkewFactor] = useState(1.5);
+  const [uiFontSize, setUiFontSize] = useState(18);
+  const [uiSpacingFactor, setUiSpacingFactor] = useState(0);
+
+  // Custom Margins State
+  const [marginTop, setMarginTop] = useState(60);
+  const [marginBottom, setMarginBottom] = useState(30);
+  const [marginLeft, setMarginLeft] = useState(50);
+  const [marginRight, setMarginRight] = useState(50);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSkewFactor(uiSkewFactor);
+      setBaseFontSize(uiFontSize);
+      setSpacingFactor(uiSpacingFactor);
+    }, 200);
+    return () => clearTimeout(timer);
+  }, [uiSkewFactor, uiFontSize, uiSpacingFactor]);
+
   const [paperType, setPaperType] = useState<PaperType>('lined');
   const [activeFontIndex, setActiveFontIndex] = useState(0); 
   const [isDarkMode, setIsDarkMode] = useState(false); 
@@ -493,6 +512,10 @@ const App = () => {
   const parseContentToPages = (root: HTMLElement) => {
     const ctx = document.createElement('canvas').getContext('2d')!;
     const segments: TextSegment[] = [];
+    const currentMarginTop = marginTop * SCALE;
+    const currentMarginBottom = marginBottom * SCALE;
+    const currentMarginLeft = marginLeft * SCALE;
+    const currentMarginRight = marginRight * SCALE;
     
     const measureTextWithSpacing = (text: string, font: string, spacing: number) => {
         ctx.font = font;
@@ -563,7 +586,7 @@ const App = () => {
             }
         });
 
-        const MAX_TABLE_WIDTH = CANVAS_WIDTH - (MARGIN_X * 2);
+        const MAX_TABLE_WIDTH = CANVAS_WIDTH - (currentMarginLeft + currentMarginRight);
         const totalMeasuredWidth = colWidthsRaw.reduce((a, b) => a + b, 0);
         const finalColWidths = [...colWidthsRaw];
         if (totalMeasuredWidth > MAX_TABLE_WIDTH) {
@@ -708,15 +731,15 @@ const App = () => {
     const finalPages: PageData[] = [];
     let currentLines: TextSegment[][] = [];
     let currentLine: TextSegment[] = [];
-    let currentY = MARGIN_Y;
-    let currentX = MARGIN_X;
+    let currentY = currentMarginTop;
+    let currentX = currentMarginLeft;
     
     // --- ROBUST PAGINATION ---
     const checkPageBreak = (neededHeight: number) => {
-        if (currentY + neededHeight > CANVAS_HEIGHT - (20 * SCALE)) {
+        if (currentY + neededHeight > CANVAS_HEIGHT - currentMarginBottom) {
             finalPages.push({ lines: currentLines });
             currentLines = [];
-            currentY = MARGIN_Y; // Reset cleanly to top margin
+            currentY = currentMarginTop; // Reset cleanly to top margin
             return true;
         }
         return false;
@@ -736,7 +759,7 @@ const App = () => {
 
         currentLines.push(currentLine);
         currentLine = [];
-        currentX = MARGIN_X;
+        currentX = currentMarginLeft;
         currentY += maxH; 
     };
 
@@ -771,13 +794,13 @@ const App = () => {
             ctx.font = effectiveFont;
             let wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
             
-            if (wordWidth > CANVAS_WIDTH - (MARGIN_X * 2)) {
+            if (wordWidth > CANVAS_WIDTH - (currentMarginLeft + currentMarginRight)) {
                 // Word is wider than entire canvas line, we must chunk it
                 let currentChunk = "";
                 let currentChunkWidth = 0;
                 for (let i = 0; i < word.length; i++) {
                     const charWidth = measureTextWithSpacing(word[i], ctx.font, spacingFactor);
-                    if (currentX + currentChunkWidth + charWidth > CANVAS_WIDTH - MARGIN_X) {
+                    if (currentX + currentChunkWidth + charWidth > CANVAS_WIDTH - currentMarginRight) {
                         if (currentChunk.length > 0) {
                             currentLine.push({ ...seg, text: currentChunk, width: currentChunkWidth });
                         }
@@ -794,7 +817,7 @@ const App = () => {
                     currentX += currentChunkWidth;
                 }
             } else {
-                if (currentX + wordWidth > CANVAS_WIDTH - MARGIN_X) {
+                if (currentX + wordWidth > CANVAS_WIDTH - currentMarginRight) {
                     flushLine();
                 }
                 currentLine.push({ ...seg, text: word, width: wordWidth });
@@ -811,10 +834,10 @@ const App = () => {
 
   // --- RENDERER ---
   useEffect(() => {
-    const dispMap = document.getElementById('displacement-map');
-    if (dispMap) {
-        dispMap.setAttribute('scale', (skewFactor * 2).toString());
-    }
+    document.getElementById('displacement-map')?.setAttribute('scale', (skewFactor * 2).toString());
+    const currentMarginTop = marginTop * SCALE;
+    const currentMarginLeft = marginLeft * SCALE;
+    const currentMarginRight = marginRight * SCALE;
 
     pages.forEach((pageData, index) => {
       const canvas = canvasRefs.current[index];
@@ -842,19 +865,19 @@ const App = () => {
           if (paperType === 'grid') {
             ctx.lineWidth = 0.5 * SCALE;
             const gridSize = 25 * SCALE;
-            for (let x = MARGIN_X; x < CANVAS_WIDTH; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke(); }
+            for (let x = currentMarginLeft; x < CANVAS_WIDTH; x += gridSize) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke(); }
             for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke(); }
           } else if (paperType === 'lined') {
-            for (let y = MARGIN_Y; y < CANVAS_HEIGHT; y += CURRENT_LINE_HEIGHT) {
+            for (let y = currentMarginTop; y < CANVAS_HEIGHT; y += CURRENT_LINE_HEIGHT) {
                 ctx.beginPath(); ctx.moveTo(0, y); ctx.bezierCurveTo(CANVAS_WIDTH/2, y + (scanEffect ? 2 : 0), CANVAS_WIDTH, y, CANVAS_WIDTH, y); ctx.stroke();
             }
-            ctx.strokeStyle = `rgba(255, 100, 100, ${lineOpacity})`; ctx.beginPath(); ctx.moveTo(MARGIN_X - (15*SCALE), 0); ctx.lineTo(MARGIN_X - (15*SCALE), CANVAS_HEIGHT); ctx.stroke();
+            ctx.strokeStyle = `rgba(255, 100, 100, ${lineOpacity})`; ctx.beginPath(); ctx.moveTo(currentMarginLeft - (15*SCALE), 0); ctx.lineTo(currentMarginLeft - (15*SCALE), CANVAS_HEIGHT); ctx.stroke();
           }
       }
 
-      let cursorY = MARGIN_Y;
+      let cursorY = currentMarginTop;
       pageData.lines.forEach(line => {
-        let cursorX = MARGIN_X;
+        let cursorX = currentMarginLeft;
         let maxLineHeight = CURRENT_LINE_HEIGHT;
         let isCodeBlockLine = false;
 
@@ -873,15 +896,15 @@ const App = () => {
             ctx.beginPath();
             ctx.strokeStyle = "#000";
             ctx.lineWidth = 3 * SCALE;
-            ctx.moveTo(MARGIN_X, cursorY);
-            ctx.lineTo(MARGIN_X, cursorY + CURRENT_LINE_HEIGHT);
+            ctx.moveTo(currentMarginLeft, cursorY);
+            ctx.lineTo(currentMarginLeft, cursorY + CURRENT_LINE_HEIGHT);
             ctx.stroke();
             cursorX += 15 * SCALE; // Indent for code
         }
 
-        const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
-        if ((dominantAlign as string) === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
-        else if ((dominantAlign as string) === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
+        const availableWidth = CANVAS_WIDTH - (currentMarginLeft + currentMarginRight);
+        if ((dominantAlign as string) === 'center') cursorX = currentMarginLeft + (availableWidth - lineTextWidth) / 2;
+        else if ((dominantAlign as string) === 'right') cursorX = currentMarginLeft + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
            if (seg.type === 'image' && seg.src) {
@@ -903,7 +926,7 @@ const App = () => {
                const { rows, colWidths } = seg.tableData;
                let tableY = cursorY;
                rows.forEach((row) => {
-                   let tableX = MARGIN_X; 
+                   let tableX = currentMarginLeft;
                    const rowHeight = row.maxHeight || CURRENT_LINE_HEIGHT;
                    row.cells.forEach((cell, cIdx) => {
                        const cellWidth = colWidths[cIdx];
@@ -946,7 +969,6 @@ const App = () => {
                                const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
                                ctx.save();
-                               ctx.filter = skewFactor > 0 ? `url(#handwriting-noise)` : 'none';
                                if ('letterSpacing' in (ctx as any)) {
                                    (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
                                }
@@ -994,7 +1016,6 @@ const App = () => {
               const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
               ctx.save();
-              ctx.filter = skewFactor > 0 ? `url(#handwriting-noise)` : 'none';
               if ('letterSpacing' in (ctx as any)) {
                   (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
               }
@@ -1027,6 +1048,21 @@ const App = () => {
           pageDrawings.forEach(stroke => renderSmoothStroke(ctx, stroke));
       }
 
+      // --- OFFSCREEN ORGANIC FILTER PASS ---
+      if (skewFactor > 0) {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = CANVAS_WIDTH;
+          tempCanvas.height = CANVAS_HEIGHT;
+          const tempCtx = tempCanvas.getContext('2d');
+          if (tempCtx) {
+              tempCtx.drawImage(canvas, 0, 0);
+              ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+              ctx.filter = `url(#handwriting-noise)`;
+              ctx.drawImage(tempCanvas, 0, 0);
+              ctx.filter = 'none';
+          }
+      }
+
       // --- SCANNER EFFECT (Preview) ---
       if (scanEffect) {
           const grad = ctx.createLinearGradient(0, 0, 100 * SCALE, 0);
@@ -1036,7 +1072,7 @@ const App = () => {
           ctx.fillRect(0,0, 100 * SCALE, CANVAS_HEIGHT);
       }
     });
-  }, [pages, skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings]);
+  }, [pages, skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings, marginTop, marginBottom, marginLeft, marginRight]);
 
   const saveProject = () => {
       const project: ProjectFile = {
@@ -1061,10 +1097,12 @@ const App = () => {
           try {
               const project = JSON.parse(event.target?.result as string) as ProjectFile;
               if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent);
-              setSkewFactor(project.settings.skew); setLineOpacity(project.settings.lineOpacity);
-              setScanEffect(project.settings.scanEffect); setBaseFontSize(project.settings.fontSize || 22);
+              setSkewFactor(project.settings.skew); setUiSkewFactor(project.settings.skew);
+              setLineOpacity(project.settings.lineOpacity);
+              setScanEffect(project.settings.scanEffect);
+              setBaseFontSize(project.settings.fontSize || 22); setUiFontSize(project.settings.fontSize || 22);
               setPaperType(project.settings.paperType || 'lined'); setActiveFontIndex(project.settings.activeFontIndex || 0);
-              setSpacingFactor(project.settings.spacing || 0);
+              setSpacingFactor(project.settings.spacing || 0); setUiSpacingFactor(project.settings.spacing || 0);
               if (project.drawings) setDrawings(project.drawings);
               triggerParse();
               showToast("Loaded successfully!", "success");
@@ -1297,14 +1335,14 @@ const App = () => {
 
              <div className="grid grid-cols-2 gap-6 pt-2">
                 <div className="space-y-3">
-                    <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Messiness</span> <span>{skewFactor}</span></div>
-                    <input type="range" min="0" max="3" step="0.5" value={skewFactor} onChange={(e) => setSkewFactor(parseFloat(e.target.value))} />
-                    <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{baseFontSize}px</span></div>
-                    <input type="range" min="14" max="32" step="1" value={baseFontSize} onChange={(e) => setBaseFontSize(parseInt(e.target.value))} />
+                    <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Messiness</span> <span>{uiSkewFactor}</span></div>
+                    <input type="range" min="0" max="3" step="0.5" value={uiSkewFactor} onChange={(e) => setUiSkewFactor(parseFloat(e.target.value))} />
+                    <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{uiFontSize}px</span></div>
+                    <input type="range" min="14" max="32" step="1" value={uiFontSize} onChange={(e) => setUiFontSize(parseInt(e.target.value))} />
                 </div>
                 <div className="space-y-3">
-                      <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{spacingFactor}px</span></div>
-                      <input type="range" min="-2" max="10" step="0.5" value={spacingFactor} onChange={(e) => setSpacingFactor(parseFloat(e.target.value))} />
+                      <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{uiSpacingFactor}px</span></div>
+                      <input type="range" min="-2" max="10" step="0.5" value={uiSpacingFactor} onChange={(e) => setUiSpacingFactor(parseFloat(e.target.value))} />
                       <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Line Opacity</span> <span>{Math.round(lineOpacity*100)}%</span></div>
                       <input type="range" min="0" max="1" step="0.1" value={lineOpacity} onChange={(e) => setLineOpacity(parseFloat(e.target.value))} />
                     <div className="flex gap-2 pt-1">
@@ -1316,6 +1354,16 @@ const App = () => {
                         </button>
                     </div>
                 </div>
+             </div>
+
+             <div className="pt-2 border-t border-slate-200 dark:border-slate-700 mt-2">
+                 <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mb-2"><span>Margins (Top, Bottom, Left, Right)</span></div>
+                 <div className="flex gap-2">
+                     <input className="w-1/4" type="range" min="10" max="150" step="5" value={marginTop} onChange={(e) => setMarginTop(parseInt(e.target.value))} title="Top Margin" />
+                     <input className="w-1/4" type="range" min="10" max="150" step="5" value={marginBottom} onChange={(e) => setMarginBottom(parseInt(e.target.value))} title="Bottom Margin" />
+                     <input className="w-1/4" type="range" min="10" max="150" step="5" value={marginLeft} onChange={(e) => setMarginLeft(parseInt(e.target.value))} title="Left Margin" />
+                     <input className="w-1/4" type="range" min="10" max="150" step="5" value={marginRight} onChange={(e) => setMarginRight(parseInt(e.target.value))} title="Right Margin" />
+                 </div>
              </div>
           </div>
           <div className="flex-1 overflow-y-auto bg-white text-slate-900 relative" onClick={handleEditorClick}>
