@@ -93,7 +93,14 @@ Since this is a private repo, connect your GitHub account to Netlify:
 
 ## 📜 Full Changelog
 
-### 🚀 Changelog v18.2 (Current)
+### 🚀 Changelog v18.3 (Current)
+
+#### 🔥 Cursive Fonts, Organic Variations & Layout Fixes
+- **Cursive Font Support:** Modified the text rendering engine to draw whole words instead of character-by-character, perfectly preserving cursive ligatures and natural flowing connections.
+- **Organic Handwritting Variations:** Injected an advanced SVG filter (`feTurbulence` and `feDisplacementMap`) that visually and physically distorts ink strokes based on the "Messiness" slider, ensuring duplicate characters look distinctly human.
+- **Layout & Overflow Fixes:** Adjusted the page margin logic to utilize the full bottom 4-5 lines of the paper. Added dynamic word-chunking logic to handle ultra-long unbroken strings (like code or URLs) so they wrap cleanly instead of bleeding off the canvas edge.
+
+### 🚀 Changelog v18.2
 
 #### 🔥 Critical Fixes & Logic
 - **Matrix Table Algorithm:** Replaced the simple table parser with a robust **2D Grid System**. This fixes alignment issues when using complex `rowSpan` and `colSpan` combinations.

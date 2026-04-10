@@ -496,9 +496,16 @@ const App = () => {
     
     const measureTextWithSpacing = (text: string, font: string, spacing: number) => {
         ctx.font = font;
-        let width = 0;
-        for (const char of text) width += ctx.measureText(char).width + (spacing * SCALE);
-        return width;
+        if ('letterSpacing' in (ctx as any)) {
+            (ctx as any).letterSpacing = `${spacing * SCALE}px`;
+            const width = ctx.measureText(text).width;
+            (ctx as any).letterSpacing = '0px';
+            return width;
+        } else {
+            let width = 0;
+            for (let i = 0; i < text.length; i++) width += ctx.measureText(text[i]).width + (spacing * SCALE);
+            return width;
+        }
     };
 
     // --- ROBUST TABLE PARSER (2D Grid) ---
@@ -706,7 +713,7 @@ const App = () => {
     
     // --- ROBUST PAGINATION ---
     const checkPageBreak = (neededHeight: number) => {
-        if (currentY + neededHeight > CANVAS_HEIGHT - MARGIN_Y) {
+        if (currentY + neededHeight > CANVAS_HEIGHT - (20 * SCALE)) {
             finalPages.push({ lines: currentLines });
             currentLines = [];
             currentY = MARGIN_Y; // Reset cleanly to top margin
@@ -762,13 +769,37 @@ const App = () => {
                 : `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
             
             ctx.font = effectiveFont;
-            const wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
+            let wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
             
-            if (currentX + wordWidth > CANVAS_WIDTH - MARGIN_X) {
-                flushLine();
+            if (wordWidth > CANVAS_WIDTH - (MARGIN_X * 2)) {
+                // Word is wider than entire canvas line, we must chunk it
+                let currentChunk = "";
+                let currentChunkWidth = 0;
+                for (let i = 0; i < word.length; i++) {
+                    const charWidth = measureTextWithSpacing(word[i], ctx.font, spacingFactor);
+                    if (currentX + currentChunkWidth + charWidth > CANVAS_WIDTH - MARGIN_X) {
+                        if (currentChunk.length > 0) {
+                            currentLine.push({ ...seg, text: currentChunk, width: currentChunkWidth });
+                        }
+                        flushLine();
+                        currentChunk = word[i];
+                        currentChunkWidth = charWidth;
+                    } else {
+                        currentChunk += word[i];
+                        currentChunkWidth += charWidth;
+                    }
+                }
+                if (currentChunk.length > 0) {
+                    currentLine.push({ ...seg, text: currentChunk, width: currentChunkWidth });
+                    currentX += currentChunkWidth;
+                }
+            } else {
+                if (currentX + wordWidth > CANVAS_WIDTH - MARGIN_X) {
+                    flushLine();
+                }
+                currentLine.push({ ...seg, text: word, width: wordWidth });
+                currentX += wordWidth;
             }
-            currentLine.push({ ...seg, text: word, width: wordWidth });
-            currentX += wordWidth; 
         });
       }
     });
@@ -780,6 +811,11 @@ const App = () => {
 
   // --- RENDERER ---
   useEffect(() => {
+    const dispMap = document.getElementById('displacement-map');
+    if (dispMap) {
+        dispMap.setAttribute('scale', (skewFactor * 2).toString());
+    }
+
     pages.forEach((pageData, index) => {
       const canvas = canvasRefs.current[index];
       if (!canvas) return;
@@ -891,32 +927,42 @@ const App = () => {
                            let startY = tableY + (rowHeight / 2) - ((lines.length * lineHeight) / 2) + (lineHeight * 0.6);
 
                            lines.forEach((line) => {
+                               ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
                                let textWidth = 0;
-                               for (const char of line) textWidth += ctx.measureText(char).width + (spacingFactor * SCALE);
+                               if ('letterSpacing' in (ctx as any)) {
+                                   (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+                                   textWidth = ctx.measureText(line).width;
+                               } else {
+                                   for (let i = 0; i < line.length; i++) textWidth += ctx.measureText(line[i]).width + (spacingFactor * SCALE);
+                               }
 
                                let textX = tableX + (10*SCALE);
                                if (cell.align === 'center') textX = tableX + (fullWidth/2) - (textWidth/2);
                                if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE);
 
-                               let currentX = textX;
-                               for (const char of line) {
-                                   const rY = (rng() - 0.5) * (skewFactor * SCALE);
-                                   const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-                                   const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
-                                   const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
+                               const rY = (rng() - 0.5) * (skewFactor * SCALE);
+                               const rRot = (rng() - 0.5) * (skewFactor * 0.15);
+                               const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
+                               const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
-                                   ctx.save();
-                                   ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
-                                   ctx.translate(currentX, startY + rY);
-                                   ctx.rotate(rRot);
-                                   ctx.scale(rScaleX, rScaleY);
-                                   ctx.fillText(char, 0, 0);
-                                   if (skewFactor > 1 && rng() > 0.5) {
-                                       ctx.strokeText(char, 0, 0);
-                                   }
-                                   ctx.restore();
-                                   currentX += ctx.measureText(char).width + (spacingFactor * SCALE);
+                               ctx.save();
+                               ctx.filter = skewFactor > 0 ? `url(#handwriting-noise)` : 'none';
+                               if ('letterSpacing' in (ctx as any)) {
+                                   (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
                                }
+                               ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+                               ctx.translate(textX, startY + rY);
+                               ctx.rotate(rRot);
+                               ctx.scale(rScaleX, rScaleY);
+                               ctx.fillText(line, 0, 0);
+                               if (skewFactor > 1 && rng() > 0.5) {
+                                   ctx.strokeText(line, 0, 0);
+                               }
+                               if ('letterSpacing' in (ctx as any)) {
+                                   (ctx as any).letterSpacing = '0px';
+                               }
+                               ctx.restore();
+
                                startY += lineHeight;
                            });
                        }
@@ -931,31 +977,45 @@ const App = () => {
               ctx.fillStyle = seg.color || '#000';
               ctx.strokeStyle = seg.color || '#000';
               ctx.lineWidth = 0.5;
-              for (let i = 0; i < seg.text.length; i++) {
-                const char = seg.text[i];
-                const charWidth = ctx.measureText(char).width;
-                const rY = (rng() - 0.5) * (skewFactor * SCALE);
-                const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-                const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
-                const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
-                ctx.save();
-                ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
-                ctx.translate(cursorX + charWidth/2, cursorY + rY);
-                ctx.rotate(rRot);
-                ctx.scale(rScaleX, rScaleY);
-                ctx.fillText(char, -charWidth/2, 0);
-                if (skewFactor > 1 && rng() > 0.5) {
-                    ctx.strokeText(char, -charWidth/2, 0);
-                }
-                ctx.restore();
-
-                if (seg.isUnderline) {
-                    ctx.beginPath(); ctx.strokeStyle = seg.color || '#000'; ctx.lineWidth = 1.5;
-                    ctx.moveTo(cursorX, cursorY + 5); ctx.lineTo(cursorX + charWidth, cursorY + 5 + (rng()*2)); ctx.stroke();
-                }
-                cursorX += charWidth + (spacingFactor * SCALE); 
+              let textWidth = 0;
+              if ('letterSpacing' in (ctx as any)) {
+                  (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+                  textWidth = ctx.measureText(seg.text).width;
+              } else {
+                  for (let i = 0; i < seg.text.length; i++) {
+                      textWidth += ctx.measureText(seg.text[i]).width + (spacingFactor * SCALE);
+                  }
               }
+
+              const rY = (rng() - 0.5) * (skewFactor * SCALE);
+              const rRot = (rng() - 0.5) * (skewFactor * 0.15);
+              const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
+              const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
+
+              ctx.save();
+              ctx.filter = skewFactor > 0 ? `url(#handwriting-noise)` : 'none';
+              if ('letterSpacing' in (ctx as any)) {
+                  (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+              }
+              ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+              ctx.translate(cursorX + textWidth/2, cursorY + rY);
+              ctx.rotate(rRot);
+              ctx.scale(rScaleX, rScaleY);
+              ctx.fillText(seg.text, -textWidth/2, 0);
+              if (skewFactor > 1 && rng() > 0.5) {
+                  ctx.strokeText(seg.text, -textWidth/2, 0);
+              }
+              if ('letterSpacing' in (ctx as any)) {
+                  (ctx as any).letterSpacing = '0px';
+              }
+              ctx.restore();
+
+              if (seg.isUnderline) {
+                  ctx.beginPath(); ctx.strokeStyle = seg.color || '#000'; ctx.lineWidth = 1.5;
+                  ctx.moveTo(cursorX, cursorY + 5); ctx.lineTo(cursorX + textWidth, cursorY + 5 + (rng()*2)); ctx.stroke();
+              }
+              cursorX += textWidth + (spacingFactor * SCALE);
            }
         });
         cursorY += maxLineHeight;
