@@ -565,7 +565,7 @@ const App = () => {
             return width;
         } else {
             let width = 0;
-            for (let i = 0; i < text.length; i++) width += ctx.measureText(text[i]).width + (spacing * SCALE);
+            for (let i = 0; i < text.length; i++) width += (ctx as CanvasRenderingContext2D).measureText(text[i]).width + (spacing * SCALE);
             return width;
         }
     };
@@ -995,7 +995,7 @@ const App = () => {
                                    (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
                                    textWidth = ctx.measureText(line).width;
                                } else {
-                                   for (let i = 0; i < line.length; i++) textWidth += ctx.measureText(line[i]).width + (spacingFactor * SCALE);
+                                   for (let i = 0; i < line.length; i++) textWidth += (ctx as CanvasRenderingContext2D).measureText(line[i]).width + (spacingFactor * SCALE);
                                }
 
                                let textX = tableX + (10*SCALE);
@@ -1045,7 +1045,7 @@ const App = () => {
                   textWidth = ctx.measureText(seg.text).width;
               } else {
                   for (let i = 0; i < seg.text.length; i++) {
-                      textWidth += ctx.measureText(seg.text[i]).width + (spacingFactor * SCALE);
+                      textWidth += (ctx as CanvasRenderingContext2D).measureText(seg.text[i]).width + (spacingFactor * SCALE);
                   }
               }
 
