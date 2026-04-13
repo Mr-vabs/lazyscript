@@ -491,7 +491,12 @@ const App = () => {
 
     // Process math elements before parsing
     const mathElements = Array.from(editorRef.current.querySelectorAll('.math'));
+
+    // Add processed class early so we don't infinitely re-process. The parsing itself can trigger changes.
     for (const el of mathElements as HTMLElement[]) {
+        if (el.classList.contains('processed-math')) continue;
+        el.classList.add('processed-math');
+
         if (el.dataset.processed === 'true') continue;
 
         try {
