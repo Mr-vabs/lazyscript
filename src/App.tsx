@@ -1,6 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import DOMPurify from 'dompurify';
+import katex from 'katex';
+import html2canvas from 'html2canvas';
+
+
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -55,11 +59,16 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
    - Style: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">
    - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
 
-4. **Tables:**
+4. **Mathematical Formulas:**
+   - Use KaTeX syntax wrapped inside a <span class="math"> tag.
+   - Example: <span class="math">c = \\pm\\sqrt{a^2 + b^2}</span>
+   - NEVER use $ or \\(\\) directly without the span tag.
+
+5. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
    - Cells: <td style="border: 1px solid black; padding: 5px; color: #000f55;">
 
-5. Do NOT use markdown. formatting must be inline CSS.
+6. Do NOT use markdown. formatting must be inline CSS.
 Here is the question:
 [PASTE QUESTION HERE]`;
 
@@ -193,7 +202,7 @@ const App = () => {
           } else {
               showToast("Clipboard doesn't look like HTML code.", "error");
           }
-      } catch (err) {
+      } catch {
           showToast("Failed to read clipboard.", "error");
       }
   };
@@ -473,11 +482,41 @@ const App = () => {
       triggerParse();
   };
 
+
   // --- PARSER ---
-  const triggerParse = () => {
+  const triggerParse = async () => {
     if (!editorRef.current) return;
     setIsProcessing(true);
     if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
+
+    // Process math elements before parsing
+    const mathElements = Array.from(editorRef.current.querySelectorAll('.math'));
+    for (const el of mathElements as HTMLElement[]) {
+        if (el.dataset.processed === 'true') continue;
+
+        try {
+            const formula = el.textContent || '';
+            const html = katex.renderToString(formula, { throwOnError: false });
+            el.innerHTML = html;
+
+            // Render to canvas
+            const canvas = await html2canvas(el as HTMLElement, { backgroundColor: null, scale: 2 });
+            const dataUrl = canvas.toDataURL('image/png');
+
+            // Replace with image
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.className = 'math-rendered';
+            img.style.height = (canvas.height / 2) + 'px';
+            img.style.display = 'inline-block';
+            img.style.verticalAlign = 'middle';
+
+            el.parentNode?.replaceChild(img, el);
+        } catch (_e) {
+            console.error("Math rendering error:", _e);
+        }
+    }
+
     parseTimeoutRef.current = window.setTimeout(() => {
       parseContentToPages(editorRef.current!);
       setIsProcessing(false);
@@ -499,7 +538,7 @@ const App = () => {
       const observer = new MutationObserver(() => triggerParse());
       observer.observe(editor, { childList: true, subtree: true, characterData: true, attributes: true });
       
-      const handleDrop = (_e: DragEvent) => {
+      const handleDrop = () => {
           setTimeout(triggerParse, 100); // Slight delay to allow DOM to settle
       };
       editor.addEventListener('drop', handleDrop);
@@ -519,10 +558,10 @@ const App = () => {
     
     const measureTextWithSpacing = (text: string, font: string, spacing: number) => {
         ctx.font = font;
-        if ('letterSpacing' in (ctx as any)) {
-            (ctx as any).letterSpacing = `${spacing * SCALE}px`;
+        if ('letterSpacing' in ctx) {
+            (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacing * SCALE}px`;
             const width = ctx.measureText(text).width;
-            (ctx as any).letterSpacing = '0px';
+            (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = '0px';
             return width;
         } else {
             let width = 0;
@@ -692,7 +731,7 @@ const App = () => {
         let newListContext = listContext;
         if (tagName === 'UL') newListContext = { type: 'ul', index: 0 };
         if (tagName === 'OL') newListContext = { type: 'ol', index: 1 };
-        let newColor = el.style.color || el.getAttribute('color') || style.color;
+        const newColor = el.style.color || el.getAttribute('color') || style.color;
         const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || parseInt(el.style.fontWeight) > 600) || style.isBold;
         const newUnderline = (tagName === 'U' || el.style.textDecoration === 'underline') || style.isUnderline;
         
@@ -792,7 +831,7 @@ const App = () => {
                 : `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
             
             ctx.font = effectiveFont;
-            let wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
+            const wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
             
             if (wordWidth > CANVAS_WIDTH - (currentMarginLeft + currentMarginRight)) {
                 // Word is wider than entire canvas line, we must chunk it
@@ -952,8 +991,8 @@ const App = () => {
                            lines.forEach((line) => {
                                ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
                                let textWidth = 0;
-                               if ('letterSpacing' in (ctx as any)) {
-                                   (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+                               if ('letterSpacing' in ctx) {
+                                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
                                    textWidth = ctx.measureText(line).width;
                                } else {
                                    for (let i = 0; i < line.length; i++) textWidth += ctx.measureText(line[i]).width + (spacingFactor * SCALE);
@@ -969,8 +1008,8 @@ const App = () => {
                                const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
                                ctx.save();
-                               if ('letterSpacing' in (ctx as any)) {
-                                   (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+                               if ('letterSpacing' in ctx) {
+                                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
                                }
                                ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
                                ctx.translate(textX, startY + rY);
@@ -980,8 +1019,8 @@ const App = () => {
                                if (skewFactor > 1 && rng() > 0.5) {
                                    ctx.strokeText(line, 0, 0);
                                }
-                               if ('letterSpacing' in (ctx as any)) {
-                                   (ctx as any).letterSpacing = '0px';
+                               if ('letterSpacing' in ctx) {
+                                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = '0px';
                                }
                                ctx.restore();
 
@@ -1001,8 +1040,8 @@ const App = () => {
               ctx.lineWidth = 0.5;
 
               let textWidth = 0;
-              if ('letterSpacing' in (ctx as any)) {
-                  (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+              if ('letterSpacing' in ctx) {
+                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
                   textWidth = ctx.measureText(seg.text).width;
               } else {
                   for (let i = 0; i < seg.text.length; i++) {
@@ -1016,8 +1055,8 @@ const App = () => {
               const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
 
               ctx.save();
-              if ('letterSpacing' in (ctx as any)) {
-                  (ctx as any).letterSpacing = `${spacingFactor * SCALE}px`;
+              if ('letterSpacing' in ctx) {
+                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
               }
               ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
               ctx.translate(cursorX + textWidth/2, cursorY + rY);
@@ -1027,8 +1066,8 @@ const App = () => {
               if (skewFactor > 1 && rng() > 0.5) {
                   ctx.strokeText(seg.text, -textWidth/2, 0);
               }
-              if ('letterSpacing' in (ctx as any)) {
-                  (ctx as any).letterSpacing = '0px';
+              if ('letterSpacing' in ctx) {
+                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = '0px';
               }
               ctx.restore();
 
@@ -1106,7 +1145,7 @@ const App = () => {
               if (project.drawings) setDrawings(project.drawings);
               triggerParse();
               showToast("Loaded successfully!", "success");
-          } catch (err) { showToast("Invalid project file.", "error"); }
+          } catch { showToast("Invalid project file.", "error"); }
       };
       reader.readAsText(file);
   };
