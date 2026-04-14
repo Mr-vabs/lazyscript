@@ -1,9 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import DOMPurify from 'dompurify';
-import katex from 'katex';
-import html2canvas from 'html2canvas';
-
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -59,9 +56,9 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
    - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
 
 4. **Mathematical Formulas:**
-   - Use KaTeX syntax wrapped inside a <span class="math"> tag.
-   - Example: <span class="math">c = \\pm\\sqrt{a^2 + b^2}</span>
-   - NEVER use $ or \\(\\) directly without the span tag.
+   - Output all mathematical formulas in plain text format inside a <pre> block.
+   - Example: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">Mean = Sum(fx) / N</pre>
+   - NEVER use LaTeX or KaTeX syntax like $, () or frac. Just use standard keyboard characters.
 
 5. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -93,7 +90,7 @@ type CellStyle = {
 type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number }; 
 type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
 
-type TextSegment = { isInline?: boolean;
+type TextSegment = {
   type: SegmentType;
   text?: string; color?: string; isBold?: boolean; isUnderline?: boolean; align?: AlignType; width?: number;
   src?: string; height?: number;
@@ -481,47 +478,11 @@ const App = () => {
       triggerParse();
   };
 
-
   // --- PARSER ---
-  const triggerParse = async () => {
+  const triggerParse = () => {
     if (!editorRef.current) return;
     setIsProcessing(true);
     if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
-
-    // Process math elements before parsing
-    const mathElements = Array.from(editorRef.current.querySelectorAll('.math'));
-    for (const el of mathElements as HTMLElement[]) {
-        if (el.classList.contains('processed-math')) continue;
-        el.classList.add('processed-math');
-
-        try {
-            const formula = el.textContent || '';
-            const html = katex.renderToString(formula, { throwOnError: false });
-            el.innerHTML = html;
-
-            // Render to canvas
-            const canvas = await html2canvas(el as HTMLElement, { backgroundColor: scanEffect ? "#f4f4f4" : "#fffdf0", scale: 2 });
-            const dataUrl = canvas.toDataURL('image/png');
-
-            // Replace with image
-            const img = document.createElement('img');
-            img.src = dataUrl;
-            img.className = 'math-rendered';
-
-            img.width = canvas.width / 2;
-            img.height = canvas.height / 2;
-            img.style.height = (canvas.height / 2) + 'px';
-            img.style.width = (canvas.width / 2) + 'px';
-
-            img.style.display = 'inline-block';
-            img.style.verticalAlign = 'middle';
-
-            el.parentNode?.replaceChild(img, el);
-        } catch (_e) {
-            console.error("Math rendering error:", _e);
-        }
-    }
-
     parseTimeoutRef.current = window.setTimeout(() => {
       parseContentToPages(editorRef.current!);
       setIsProcessing(false);
@@ -720,17 +681,9 @@ const App = () => {
             if (tableSeg) segments.push(tableSeg);
             return; 
         }
-
         if (tagName === 'IMG') {
             const imgEl = el as HTMLImageElement;
-            const isMath = imgEl.classList.contains('math-rendered');
-            segments.push({
-               type: 'image',
-               src: imgEl.src,
-               width: imgEl.width * SCALE || 200 * SCALE,
-               height: imgEl.height * SCALE || 150 * SCALE,
-               isInline: isMath
-            });
+            segments.push({ type: 'image', src: imgEl.src, width: imgEl.width * SCALE || 200 * SCALE, height: imgEl.height * SCALE || 150 * SCALE });
             return;
         }
         if (tagName === 'PRE') {
@@ -818,8 +771,7 @@ const App = () => {
     segments.forEach(seg => {
       if (seg.text === '\n') { flushLine(); return; }
       
-
-      if (seg.type === 'table' || (seg.type === 'image' && !seg.isInline)) {
+      if (seg.type === 'table' || seg.type === 'image') {
           if (currentLine.length > 0) flushLine();
           
           let height = 0;
@@ -833,22 +785,10 @@ const App = () => {
           return;
       }
       
-
-      if (seg.type === 'text' || (seg.type === 'image' && seg.isInline)) {
-        if (seg.type === 'image' && seg.isInline) {
-             const imgWidth = seg.width || 0;
-             if (currentX + imgWidth > CANVAS_WIDTH - currentMarginRight) {
-                 flushLine();
-             }
-             currentLine.push(seg);
-             currentX += imgWidth + (spacingFactor * SCALE);
-             return;
-        }
-
+      if (seg.type === 'text') {
         // If it's a code line, we might need to handle indentation visually in renderer
         // For text wrapping:
         const words = seg.text!.split(/(\s+)/);
-
         words.forEach(word => {
             if (word === "") return;
             // Handle Code indentation preservation
