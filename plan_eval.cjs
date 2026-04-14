@@ -1,3 +1,6 @@
-console.log("The user wants us to support raw LaTeX wrapped in a specific tag like `<LateKatex>...</LateKatex>`.");
-console.log("If they paste LaTeX code in the editor or through `Paste AI`, it should be detected and rendered.");
-console.log("The user provides `\\[ ... \\]` strings, but standard paste doesn't evaluate them unless they're inside our tag.");
+console.log("Looking closely at the image: the math fraction is cropped AT THE BOTTOM in the editor AND the canvas.");
+console.log("This tells me `html2canvas` is picking up exactly what is rendered in the editor, and what is rendered in the editor is clipped.");
+console.log("Why is it clipped in the editor? The editor div has `leading-relaxed` (Tailwind for line-height: 1.625). If a span inside it (the generated image or KaTeX span) is taller than the line height, and it has `display: inline-block`, it shouldn't be clipped unless the container has `overflow: hidden`, or if there's an issue with the element's actual height calculation.");
+console.log("Wait, we do `el.innerHTML = html` then `const canvas = await html2canvas(el)`. Before rendering, `el` is a `<latekatex>` tag which is an inline element by default.");
+console.log("If an unknown tag `<latekatex>` is used, browsers treat it as `display: inline`. KaTeX generates blocks that might need block formatting context to not clip, or they might clip out of their inline bounding box! Yes! Inline elements don't wrap their absolutely positioned children (KaTeX uses lots of relative/absolute positioning).");
+console.log("So `<latekatex>` must be styled with `display: inline-block` BEFORE `html2canvas` captures it! Otherwise `html2canvas` captures the 0-height or small-height inline bounding box!");

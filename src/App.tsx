@@ -526,11 +526,19 @@ const App = () => {
     setIsProcessing(true);
     if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
 
+
     // Process math elements before parsing
     const mathElements = Array.from(editorRef.current.querySelectorAll('pre.math, span.math, latekatex'));
     for (const el of mathElements as HTMLElement[]) {
         if (el.classList.contains('processed-math')) continue;
         el.classList.add('processed-math');
+
+        // Ensure the element has a proper box model so html2canvas captures it fully without clipping.
+        // Inline elements (like <latekatex> natively) will clip KaTeX's absolutely positioned nodes.
+        el.style.display = 'inline-block';
+        el.style.verticalAlign = 'middle';
+        // Add a slight padding to accommodate deep descending fractions or tall integrals
+        el.style.padding = '0 2px';
 
         try {
             const formula = el.textContent || '';
@@ -543,7 +551,9 @@ const App = () => {
 
             const canvas = await html2canvas(el as HTMLElement, {
                 backgroundColor: scanEffect ? "#f4f4f4" : "#fffdf0", // paper background
-                scale: 2
+                scale: 2,
+                logging: false,
+                useCORS: true
             });
             const dataUrl = canvas.toDataURL('image/png');
 
@@ -554,13 +564,17 @@ const App = () => {
             img.height = canvas.height / 2;
             img.style.width = (canvas.width / 2) + 'px';
             img.style.height = (canvas.height / 2) + 'px';
+            img.style.border = 'none';
+            img.style.outline = 'none';
 
             if (el.tagName === 'SPAN' || el.tagName === 'LATEKATEX') {
                 img.style.display = 'inline-block';
                 img.style.verticalAlign = 'middle';
+                // Adjust margin to help line-height and bounding box on canvas rendering
+                img.style.margin = '0 5px';
             } else {
                 img.style.display = 'block';
-                img.style.margin = '0';
+                img.style.margin = '10px auto';
             }
 
             el.parentNode?.replaceChild(img, el);
