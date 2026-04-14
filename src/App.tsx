@@ -60,10 +60,9 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
 
 4. **Mathematical Formulas:**
    - Use KaTeX syntax.
-   - You MUST wrap EVERY formula block (inline or display) inside a <pre class="math"> tag.
-   - **Pretext**: For better text visuals and layout, use plain text where possible, but for complex math (fractions, sums) use the <pre class="math"> tag.
-   - Example: <pre class="math">c = \\pm\\sqrt{a^2 + b^2}</pre>
-   - NEVER use $ or \\(\\) directly without the <pre class="math"> tag.
+   - You MUST wrap EVERY formula block (inline or display) inside a <LateKatex> tag.
+   - Example: <LateKatex>c = \\pm\\sqrt{a^2 + b^2}</LateKatex>
+   - NEVER use $ or \\[\\] or \\(\\) directly without the <LateKatex> tag.
 
 5. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -192,10 +191,17 @@ const App = () => {
       showToast("AI Prompt copied!", "success");
   };
   
+
   const pasteAIHtml = async () => {
       try {
-          const text = await navigator.clipboard.readText();
+          let text = await navigator.clipboard.readText();
+
+          // Auto-convert standard LaTeX delimiters to <latekatex> tags if they exist
+          text = text.replace(/\\\[([\s\S]*?)\\\]/g, '<latekatex>$1</latekatex>');
+          text = text.replace(/\\\(([\s\S]*?)\\\)/g, '<latekatex>$1</latekatex>');
+
           if (text.includes('<') && text.includes('>')) {
+
               if (editorRef.current) {
                   editorRef.current.focus();
                   document.execCommand('insertHTML', false, text);
@@ -521,14 +527,14 @@ const App = () => {
     if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
 
     // Process math elements before parsing
-    const mathElements = Array.from(editorRef.current.querySelectorAll('pre.math, span.math'));
+    const mathElements = Array.from(editorRef.current.querySelectorAll('pre.math, span.math, latekatex'));
     for (const el of mathElements as HTMLElement[]) {
         if (el.classList.contains('processed-math')) continue;
         el.classList.add('processed-math');
 
         try {
             const formula = el.textContent || '';
-            const html = katex.renderToString(formula, { throwOnError: false, displayMode: el.tagName === 'PRE' });
+            const html = katex.renderToString(formula, { throwOnError: false, displayMode: el.tagName === 'PRE' || el.tagName === 'LATEKATEX' });
             el.innerHTML = html;
 
             // To ensure the math doesn't overlap text, we need to correctly handle its dimensions.
@@ -549,7 +555,7 @@ const App = () => {
             img.style.width = (canvas.width / 2) + 'px';
             img.style.height = (canvas.height / 2) + 'px';
 
-            if (el.tagName === 'SPAN') {
+            if (el.tagName === 'SPAN' || el.tagName === 'LATEKATEX') {
                 img.style.display = 'inline-block';
                 img.style.verticalAlign = 'middle';
             } else {
@@ -1221,7 +1227,7 @@ const App = () => {
       reader.onload = (event) => {
           try {
               const project = JSON.parse(event.target?.result as string) as ProjectFile;
-              if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent);
+              if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent, { ADD_TAGS: ['latekatex'] });
               setSkewFactor(project.settings.skew); setUiSkewFactor(project.settings.skew);
               setLineOpacity(project.settings.lineOpacity);
               setScanEffect(project.settings.scanEffect);
