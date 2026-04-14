@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import DOMPurify from 'dompurify';
+import katex from 'katex';
+import html2canvas from 'html2canvas';
+
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -56,9 +59,11 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
    - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
 
 4. **Mathematical Formulas:**
-   - Output all mathematical formulas in plain text format inside a <pre> block.
-   - Example: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">Mean = Sum(fx) / N</pre>
-   - NEVER use LaTeX or KaTeX syntax like $, () or frac. Just use standard keyboard characters.
+   - Use KaTeX syntax.
+   - You MUST wrap EVERY formula block (inline or display) inside a <pre class="math"> tag.
+   - **Pretext**: For better text visuals and layout, use plain text where possible, but for complex math (fractions, sums) use the <pre class="math"> tag.
+   - Example: <pre class="math">c = \\pm\\sqrt{a^2 + b^2}</pre>
+   - NEVER use $ or \\(\\) directly without the <pre class="math"> tag.
 
 5. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -90,12 +95,14 @@ type CellStyle = {
 type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number }; 
 type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
 
-type TextSegment = {
+
+type TextSegment = { fontSize?: number; skew?: number;
   type: SegmentType;
   text?: string; color?: string; isBold?: boolean; isUnderline?: boolean; align?: AlignType; width?: number;
   src?: string; height?: number;
   tableData?: TableData;
-  isCodeLine?: boolean; // New flag for code pagination
+  isCodeLine?: boolean;
+  isInline?: boolean; // Used for math spans
 };
 type PageData = { lines: TextSegment[][]; };
 
@@ -247,6 +254,34 @@ const App = () => {
 
   const preventFocusLoss = (e: React.MouseEvent) => {
       e.preventDefault();
+  };
+
+
+  const applySelectionStyle = (styleName: string, value: string, globalSetter: () => void) => {
+      const sel = window.getSelection();
+      if (sel && sel.rangeCount > 0 && !sel.isCollapsed && editorRef.current?.contains(sel.anchorNode)) {
+          // If we have a selection, wrap it in a span
+          document.execCommand('styleWithCSS', false, 'true');
+
+          if (styleName === 'fontSize') {
+              // Instead of execCommand fontSize which uses 1-7, we must wrap it manually or use a trick
+              const span = document.createElement('span');
+              span.style.fontSize = value + 'px';
+              const range = sel.getRangeAt(0);
+              span.appendChild(range.extractContents());
+              range.insertNode(span);
+          } else if (styleName === 'skew') {
+              const span = document.createElement('span');
+              span.dataset.skew = value;
+              const range = sel.getRangeAt(0);
+              span.appendChild(range.extractContents());
+              range.insertNode(span);
+          }
+          triggerParse();
+      } else {
+          // No selection, apply globally
+          globalSetter();
+      }
   };
 
   // --- DRAWING LOGIC ---
@@ -478,16 +513,61 @@ const App = () => {
       triggerParse();
   };
 
+
   // --- PARSER ---
-  const triggerParse = () => {
+  const triggerParse = async () => {
     if (!editorRef.current) return;
     setIsProcessing(true);
     if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
+
+    // Process math elements before parsing
+    const mathElements = Array.from(editorRef.current.querySelectorAll('pre.math, span.math'));
+    for (const el of mathElements as HTMLElement[]) {
+        if (el.classList.contains('processed-math')) continue;
+        el.classList.add('processed-math');
+
+        try {
+            const formula = el.textContent || '';
+            const html = katex.renderToString(formula, { throwOnError: false, displayMode: el.tagName === 'PRE' });
+            el.innerHTML = html;
+
+            // To ensure the math doesn't overlap text, we need to correctly handle its dimensions.
+            // HTML2Canvas needs time to render the fonts. We can await a small timeout or use font loading.
+            await new Promise(r => setTimeout(r, 100)); // wait for KaTeX font layout
+
+            const canvas = await html2canvas(el as HTMLElement, {
+                backgroundColor: scanEffect ? "#f4f4f4" : "#fffdf0", // paper background
+                scale: 2
+            });
+            const dataUrl = canvas.toDataURL('image/png');
+
+            const img = document.createElement('img');
+            img.src = dataUrl;
+            img.className = 'math-rendered';
+            img.width = canvas.width / 2;
+            img.height = canvas.height / 2;
+            img.style.width = (canvas.width / 2) + 'px';
+            img.style.height = (canvas.height / 2) + 'px';
+
+            if (el.tagName === 'SPAN') {
+                img.style.display = 'inline-block';
+                img.style.verticalAlign = 'middle';
+            } else {
+                img.style.display = 'block';
+                img.style.margin = '0';
+            }
+
+            el.parentNode?.replaceChild(img, el);
+        } catch {
+            console.error("Math rendering error");
+        }
+    }
+
     parseTimeoutRef.current = window.setTimeout(() => {
       parseContentToPages(editorRef.current!);
       setIsProcessing(false);
       parseTimeoutRef.current = null;
-    }, 300);
+    }, 100);
   };
   
   // Re-parse when layout-affecting settings change (Issue #2)
@@ -671,7 +751,7 @@ const App = () => {
         });
     };
 
-    const traverse = (node: Node, style: { color: string, isBold: boolean, isUnderline: boolean }, listContext: { type: string, index: number } | null) => {
+    const traverse = (node: Node, style: { color: string, isBold: boolean, isUnderline: boolean, fontSize?: number, skew?: number }, listContext: { type: string, index: number } | null) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
         const tagName = el.tagName;
@@ -681,9 +761,17 @@ const App = () => {
             if (tableSeg) segments.push(tableSeg);
             return; 
         }
+
         if (tagName === 'IMG') {
             const imgEl = el as HTMLImageElement;
-            segments.push({ type: 'image', src: imgEl.src, width: imgEl.width * SCALE || 200 * SCALE, height: imgEl.height * SCALE || 150 * SCALE });
+            const isInline = imgEl.style.display === 'inline-block' || imgEl.classList.contains('math-rendered') && !imgEl.style.display.includes('block');
+            segments.push({
+               type: 'image',
+               src: imgEl.src,
+               width: imgEl.width * SCALE || 200 * SCALE,
+               height: imgEl.height * SCALE || 150 * SCALE,
+               isInline: isInline
+            });
             return;
         }
         if (tagName === 'PRE') {
@@ -700,24 +788,39 @@ const App = () => {
         const newColor = el.style.color || el.getAttribute('color') || style.color;
         const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || parseInt(el.style.fontWeight) > 600) || style.isBold;
         const newUnderline = (tagName === 'U' || el.style.textDecoration === 'underline') || style.isUnderline;
+
+        let newFontSize = style.fontSize;
+        if (el.style.fontSize) {
+            const parsed = parseInt(el.style.fontSize);
+            if (!isNaN(parsed)) newFontSize = parsed;
+        }
+        let newSkew = style.skew;
+        if (el.dataset.skew) {
+            newSkew = parseFloat(el.dataset.skew);
+        }
+
         
         if (tagName === 'LI' && listContext) {
             const bullet = listContext.type === 'ul' ? "• " : `${listContext.index}. `;
-            segments.push({ type: 'text', text: bullet, color: newColor, isBold: true }); 
+            segments.push({ type: 'text', text: bullet, color: newColor, isBold: true, fontSize: newFontSize, skew: newSkew });
             if (listContext.type === 'ol') listContext.index++;
         }
         
+
         const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
         let align = 'left' as AlignType;
         if (rawAlign === 'center') align = 'center';
         if (rawAlign === 'right') align = 'right';
 
+
+
+
         node.childNodes.forEach(child => {
             if (child.nodeType === Node.TEXT_NODE) {
                 const text = child.textContent || "";
-                if (text) segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align: align });
+                if (text) segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align: align, fontSize: newFontSize, skew: newSkew });
             } else {
-                traverse(child, { color: newColor, isBold: newBold, isUnderline: newUnderline }, newListContext);
+                traverse(child, { color: newColor, isBold: newBold, isUnderline: newUnderline, fontSize: newFontSize, skew: newSkew }, newListContext);
             }
         });
         if (isBlock && tagName !== 'BR') {
@@ -727,11 +830,11 @@ const App = () => {
         if (tagName === 'BR') segments.push({ type: 'text', text: '\n' });
       } else if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent || "";
-        if (text) segments.push({ type: 'text', text, color: style.color, isBold: style.isBold, isUnderline: style.isUnderline });
+        if (text) segments.push({ type: 'text', text, color: style.color, isBold: style.isBold, isUnderline: style.isUnderline, fontSize: style.fontSize, skew: style.skew });
       }
     };
 
-    traverse(root, { color: '#000000', isBold: false, isUnderline: false }, null);
+    traverse(root, { color: '#000000', isBold: false, isUnderline: false, fontSize: undefined, skew: undefined }, null);
 
     const finalPages: PageData[] = [];
     let currentLines: TextSegment[][] = [];
@@ -771,7 +874,8 @@ const App = () => {
     segments.forEach(seg => {
       if (seg.text === '\n') { flushLine(); return; }
       
-      if (seg.type === 'table' || seg.type === 'image') {
+
+      if (seg.type === 'table' || (seg.type === 'image' && !seg.isInline)) {
           if (currentLine.length > 0) flushLine();
           
           let height = 0;
@@ -785,16 +889,31 @@ const App = () => {
           return;
       }
       
-      if (seg.type === 'text') {
+      if (seg.type === 'text' || (seg.type === 'image' && seg.isInline)) {
+        if (seg.type === 'image' && seg.isInline) {
+             const imgWidth = seg.width || 0;
+             if (currentX + imgWidth > CANVAS_WIDTH - currentMarginRight) {
+                 flushLine();
+             }
+             currentLine.push(seg);
+             currentX += imgWidth + (spacingFactor * SCALE);
+             return;
+        }
+
         // If it's a code line, we might need to handle indentation visually in renderer
         // For text wrapping:
         const words = seg.text!.split(/(\s+)/);
+
         words.forEach(word => {
             if (word === "") return;
             // Handle Code indentation preservation
+
+            const segmentFontSize = (seg.fontSize || baseFontSize) * SCALE;
+
+
             const effectiveFont = seg.isCodeLine 
-                ? `normal ${CURRENT_FONT_SIZE}px monospace` 
-                : `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+                ? `normal ${segmentFontSize}px monospace`
+                : `${seg.isBold ? 'bold' : 'normal'} ${segmentFontSize}px ${CURRENT_FONT.family}`;
             
             ctx.font = effectiveFont;
             const wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
@@ -858,7 +977,8 @@ const App = () => {
           return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
         };
       };
-      const rng = mulberry32(index + baseFontSize + Math.floor(skewFactor * 100));
+      const getRng = (skewParam: number) => mulberry32(index + baseFontSize + Math.floor(skewParam * 100));
+      const rng = getRng(skewFactor);
 
       ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
       ctx.fillStyle = scanEffect ? "#f4f4f4" : "#fffdf0";
@@ -977,12 +1097,12 @@ const App = () => {
                                if ('letterSpacing' in ctx) {
                                    (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
                                }
-                               ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+                               ctx.globalAlpha = Math.max(0.4, 1 - (rng() * (seg.skew !== undefined ? seg.skew : skewFactor) * 0.2));
                                ctx.translate(textX, startY + rY);
                                ctx.rotate(rRot);
                                ctx.scale(rScaleX, rScaleY);
                                ctx.fillText(line, 0, 0);
-                               if (skewFactor > 1 && rng() > 0.5) {
+                               if ((seg.skew !== undefined ? seg.skew : skewFactor) > 1 && rng() > 0.5) {
                                    ctx.strokeText(line, 0, 0);
                                }
                                if ('letterSpacing' in ctx) {
@@ -1024,12 +1144,12 @@ const App = () => {
               if ('letterSpacing' in ctx) {
                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
               }
-              ctx.globalAlpha = Math.max(0.4, 1 - (rng() * skewFactor * 0.2));
+              ctx.globalAlpha = Math.max(0.4, 1 - (rng() * (seg.skew !== undefined ? seg.skew : skewFactor) * 0.2));
               ctx.translate(cursorX + textWidth/2, cursorY + rY);
               ctx.rotate(rRot);
               ctx.scale(rScaleX, rScaleY);
               ctx.fillText(seg.text, -textWidth/2, 0);
-              if (skewFactor > 1 && rng() > 0.5) {
+              if ((seg.skew !== undefined ? seg.skew : skewFactor) > 1 && rng() > 0.5) {
                   ctx.strokeText(seg.text, -textWidth/2, 0);
               }
               if ('letterSpacing' in ctx) {
@@ -1341,9 +1461,9 @@ const App = () => {
              <div className="grid grid-cols-2 gap-6 pt-2">
                 <div className="space-y-3">
                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Messiness</span> <span>{uiSkewFactor}</span></div>
-                    <input type="range" min="0" max="3" step="0.5" value={uiSkewFactor} onChange={(e) => setUiSkewFactor(parseFloat(e.target.value))} />
+                    <input type="range" min="0" max="3" step="0.5" value={uiSkewFactor} onChange={(e) => { const v = parseFloat(e.target.value); setUiSkewFactor(v); applySelectionStyle('skew', v.toString(), () => setUiSkewFactor(v)); }} />
                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{uiFontSize}px</span></div>
-                    <input type="range" min="14" max="32" step="1" value={uiFontSize} onChange={(e) => setUiFontSize(parseInt(e.target.value))} />
+                    <input type="range" min="14" max="32" step="1" value={uiFontSize} onChange={(e) => { const v = parseInt(e.target.value); setUiFontSize(v); applySelectionStyle('fontSize', v.toString(), () => setUiFontSize(v)); }} />
                 </div>
                 <div className="space-y-3">
                       <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{uiSpacingFactor}px</span></div>
