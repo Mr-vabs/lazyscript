@@ -4,7 +4,6 @@ import DOMPurify from 'dompurify';
 import katex from 'katex';
 import html2canvas from 'html2canvas';
 
-
 import { 
     Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon, 
     Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2, 
@@ -94,7 +93,7 @@ type CellStyle = {
 type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number }; 
 type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
 
-type TextSegment = {
+type TextSegment = { isInline?: boolean;
   type: SegmentType;
   text?: string; color?: string; isBold?: boolean; isUnderline?: boolean; align?: AlignType; width?: number;
   src?: string; height?: number;
@@ -491,13 +490,9 @@ const App = () => {
 
     // Process math elements before parsing
     const mathElements = Array.from(editorRef.current.querySelectorAll('.math'));
-
-    // Add processed class early so we don't infinitely re-process. The parsing itself can trigger changes.
     for (const el of mathElements as HTMLElement[]) {
         if (el.classList.contains('processed-math')) continue;
         el.classList.add('processed-math');
-
-        if (el.dataset.processed === 'true') continue;
 
         try {
             const formula = el.textContent || '';
@@ -505,14 +500,19 @@ const App = () => {
             el.innerHTML = html;
 
             // Render to canvas
-            const canvas = await html2canvas(el as HTMLElement, { backgroundColor: null, scale: 2 });
+            const canvas = await html2canvas(el as HTMLElement, { backgroundColor: scanEffect ? "#f4f4f4" : "#fffdf0", scale: 2 });
             const dataUrl = canvas.toDataURL('image/png');
 
             // Replace with image
             const img = document.createElement('img');
             img.src = dataUrl;
             img.className = 'math-rendered';
+
+            img.width = canvas.width / 2;
+            img.height = canvas.height / 2;
             img.style.height = (canvas.height / 2) + 'px';
+            img.style.width = (canvas.width / 2) + 'px';
+
             img.style.display = 'inline-block';
             img.style.verticalAlign = 'middle';
 
@@ -720,9 +720,17 @@ const App = () => {
             if (tableSeg) segments.push(tableSeg);
             return; 
         }
+
         if (tagName === 'IMG') {
             const imgEl = el as HTMLImageElement;
-            segments.push({ type: 'image', src: imgEl.src, width: imgEl.width * SCALE || 200 * SCALE, height: imgEl.height * SCALE || 150 * SCALE });
+            const isMath = imgEl.classList.contains('math-rendered');
+            segments.push({
+               type: 'image',
+               src: imgEl.src,
+               width: imgEl.width * SCALE || 200 * SCALE,
+               height: imgEl.height * SCALE || 150 * SCALE,
+               isInline: isMath
+            });
             return;
         }
         if (tagName === 'PRE') {
@@ -810,7 +818,8 @@ const App = () => {
     segments.forEach(seg => {
       if (seg.text === '\n') { flushLine(); return; }
       
-      if (seg.type === 'table' || seg.type === 'image') {
+
+      if (seg.type === 'table' || (seg.type === 'image' && !seg.isInline)) {
           if (currentLine.length > 0) flushLine();
           
           let height = 0;
@@ -824,10 +833,22 @@ const App = () => {
           return;
       }
       
-      if (seg.type === 'text') {
+
+      if (seg.type === 'text' || (seg.type === 'image' && seg.isInline)) {
+        if (seg.type === 'image' && seg.isInline) {
+             const imgWidth = seg.width || 0;
+             if (currentX + imgWidth > CANVAS_WIDTH - currentMarginRight) {
+                 flushLine();
+             }
+             currentLine.push(seg);
+             currentX += imgWidth + (spacingFactor * SCALE);
+             return;
+        }
+
         // If it's a code line, we might need to handle indentation visually in renderer
         // For text wrapping:
-        const words = seg.text!.split(/(\s+)/); 
+        const words = seg.text!.split(/(\s+)/);
+
         words.forEach(word => {
             if (word === "") return;
             // Handle Code indentation preservation
