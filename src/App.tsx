@@ -58,11 +58,12 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
    - Style: <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">
    - **ESCAPING:** You MUST replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
 
-4. **Mathematical Formulas:**
-   - Use KaTeX syntax.
-   - You MUST wrap EVERY formula block (inline or display) inside a <LateKatex> tag.
-   - Example: <LateKatex>c = \\pm\\sqrt{a^2 + b^2}</LateKatex>
-   - NEVER use $ or \\[\\] or \\(\\) directly without the <LateKatex> tag.
+4. **Mathematical Formulas (CRITICAL):**
+   - Use KaTeX/LaTeX syntax.
+   - You MUST wrap EVERY SINGLE formula, equation, or math variable (even inline ones like mean, sum, variance) inside a <latekatex> tag.
+   - Example 1 (Equation): <latekatex>c = \\pm\\sqrt{a^2 + b^2}</latekatex>
+   - Example 2 (Inline): The mean is <latekatex>\\bar{x} = \\frac{\\sum fx}{N}</latekatex> and variance is <latekatex>\\sigma^2</latekatex>.
+   - NEVER use raw $, $$, \\[, \\], \\(, or \\) delimiters. ALWAYS use <latekatex>...</latekatex>.
 
 5. **Tables:**
    - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -199,6 +200,9 @@ const App = () => {
           // Auto-convert standard LaTeX delimiters to <latekatex> tags if they exist
           text = text.replace(/\\\[([\s\S]*?)\\\]/g, '<latekatex>$1</latekatex>');
           text = text.replace(/\\\(([\s\S]*?)\\\)/g, '<latekatex>$1</latekatex>');
+          // Also convert $...$ and $$...$$ if AI stubbornly used them
+          text = text.replace(/\$\$([\s\S]*?)\$\$/g, '<latekatex>$1</latekatex>');
+          text = text.replace(/(?<!\\)\$((?:[^$\\]|\\.)+)\$/g, '<latekatex>$1</latekatex>');
 
           if (text.includes('<') && text.includes('>')) {
 
@@ -269,20 +273,32 @@ const App = () => {
           // If we have a selection, wrap it in a span
           document.execCommand('styleWithCSS', false, 'true');
 
-          if (styleName === 'fontSize') {
-              // Instead of execCommand fontSize which uses 1-7, we must wrap it manually or use a trick
-              const span = document.createElement('span');
-              span.style.fontSize = value + 'px';
-              const range = sel.getRangeAt(0);
-              span.appendChild(range.extractContents());
-              range.insertNode(span);
-          } else if (styleName === 'skew') {
-              const span = document.createElement('span');
-              span.dataset.skew = value;
-              const range = sel.getRangeAt(0);
-              span.appendChild(range.extractContents());
-              range.insertNode(span);
+          const range = sel.getRangeAt(0);
+
+          // Check if we are already inside a span we created to avoid massive nesting
+          let targetSpan: HTMLSpanElement | null = null;
+          if (range.startContainer.parentElement?.tagName === 'SPAN' &&
+              range.startContainer.parentElement === range.endContainer.parentElement &&
+              range.startContainer.textContent === range.startContainer.parentElement.textContent) {
+              targetSpan = range.startContainer.parentElement;
+          } else {
+              targetSpan = document.createElement('span');
+              targetSpan.appendChild(range.extractContents());
+              range.insertNode(targetSpan);
           }
+
+          if (styleName === 'fontSize') {
+              targetSpan.style.fontSize = value + 'px';
+          } else if (styleName === 'skew') {
+              targetSpan.dataset.skew = value;
+          }
+
+          // Restore selection
+          sel.removeAllRanges();
+          const newRange = document.createRange();
+          newRange.selectNodeContents(targetSpan);
+          sel.addRange(newRange);
+
           triggerParse();
       } else {
           // No selection, apply globally
@@ -542,7 +558,8 @@ const App = () => {
 
         try {
             const formula = el.textContent || '';
-            const html = katex.renderToString(formula, { throwOnError: false, displayMode: el.tagName === 'PRE' || el.tagName === 'LATEKATEX' });
+            // Only use displayMode for blocks (PRE, or if the formula explicitly contains multiline/display requests, but default to inline for LATEKATEX to prevent huge gaps)
+            const html = katex.renderToString(formula, { throwOnError: false, displayMode: el.tagName === 'PRE' });
             el.innerHTML = html;
 
             // To ensure the math doesn't overlap text, we need to correctly handle its dimensions.
@@ -550,7 +567,7 @@ const App = () => {
             await new Promise(r => setTimeout(r, 100)); // wait for KaTeX font layout
 
             const canvas = await html2canvas(el as HTMLElement, {
-                backgroundColor: scanEffect ? "#f4f4f4" : "#fffdf0", // paper background
+                backgroundColor: null, // transparent background to show paper lines
                 scale: 2,
                 logging: false,
                 useCORS: true
