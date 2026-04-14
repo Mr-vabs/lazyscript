@@ -1052,21 +1052,34 @@ const App = () => {
         else if ((dominantAlign as string) === 'right') cursorX = currentMarginLeft + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
+
            if (seg.type === 'image' && seg.src) {
-               const img = new Image();
-               img.crossOrigin = 'anonymous';
                const drawW = seg.width || (150 * SCALE);
                const drawH = seg.height || (100 * SCALE);
+
+               const drawX = cursorX;
+               let drawY = cursorY;
+
+               if (seg.isInline) {
+                   drawY = cursorY - drawH / 2; // roughly center it
+                   cursorX += drawW + (spacingFactor * SCALE);
+               } else {
+                   maxLineHeight = drawH + 20;
+               }
+
+               const img = new Image();
+               img.crossOrigin = 'anonymous';
                img.onload = () => {
-                 ctx.drawImage(img, cursorX, cursorY, drawW, drawH);
-                 // Selection handles
-                 ctx.fillStyle = "rgba(59, 130, 246, 0.5)";
-                 ctx.fillRect(cursorX - 5, cursorY - 5, 10, 10);
-                 ctx.fillRect(cursorX + drawW - 5, cursorY + drawH - 5, 10, 10);
+                 ctx.drawImage(img, drawX, drawY, drawW, drawH);
+                 // Selection handles (optional)
+                 // ctx.fillStyle = "rgba(59, 130, 246, 0.5)";
+                 // ctx.fillRect(drawX - 5, drawY - 5, 10, 10);
+                 // ctx.fillRect(drawX + drawW - 5, drawY + drawH - 5, 10, 10);
                };
                img.src = seg.src;
-               maxLineHeight = drawH + 20;
-           } 
+               return;
+           }
+
            else if (seg.type === 'table' && seg.tableData) {
                const { rows, colWidths } = seg.tableData;
                let tableY = cursorY;
