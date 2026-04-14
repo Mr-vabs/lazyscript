@@ -1,6 +1,4 @@
-console.log("Looking closely at the image: the math fraction is cropped AT THE BOTTOM in the editor AND the canvas.");
-console.log("This tells me `html2canvas` is picking up exactly what is rendered in the editor, and what is rendered in the editor is clipped.");
-console.log("Why is it clipped in the editor? The editor div has `leading-relaxed` (Tailwind for line-height: 1.625). If a span inside it (the generated image or KaTeX span) is taller than the line height, and it has `display: inline-block`, it shouldn't be clipped unless the container has `overflow: hidden`, or if there's an issue with the element's actual height calculation.");
-console.log("Wait, we do `el.innerHTML = html` then `const canvas = await html2canvas(el)`. Before rendering, `el` is a `<latekatex>` tag which is an inline element by default.");
-console.log("If an unknown tag `<latekatex>` is used, browsers treat it as `display: inline`. KaTeX generates blocks that might need block formatting context to not clip, or they might clip out of their inline bounding box! Yes! Inline elements don't wrap their absolutely positioned children (KaTeX uses lots of relative/absolute positioning).");
-console.log("So `<latekatex>` must be styled with `display: inline-block` BEFORE `html2canvas` captures it! Otherwise `html2canvas` captures the 0-height or small-height inline bounding box!");
+console.log("User reported: 'image is not positioned where it should be, instead its showing all the images (formulas) at the end of the page'.");
+console.log("This happens because the parser (`traverse`) probably processes images out of order, or the DOM structure puts them at the end.");
+console.log("Actually, `traverse` visits nodes recursively. If the images are pushed to the end, it's likely because `childNodes.forEach` might be skipping them or adding them after the text.");
+console.log("Let's look at `traverse` for `IMG` tags!");
