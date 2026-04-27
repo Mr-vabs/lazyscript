@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.6",
     "dompurify": "^3.3.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.0.0",

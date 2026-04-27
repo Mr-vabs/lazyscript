@@ -1,3 +1,4 @@
+import { prepareWithSegments, measureNaturalWidth } from "@chenglou/pretext";
 import React, { useState, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import DOMPurify from 'dompurify';
@@ -643,6 +644,8 @@ const App = () => {
     const currentMarginRight = marginRight * SCALE;
     
     const measureTextWithSpacing = (text: string, font: string, spacing: number) => {
+        try { const prepared = prepareWithSegments(text, font, { letterSpacing: spacing * SCALE }); return measureNaturalWidth(prepared); } catch (e) {}
+
         ctx.font = font;
         if ('letterSpacing' in ctx) {
             (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacing * SCALE}px`;
