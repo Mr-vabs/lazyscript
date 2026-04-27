@@ -866,6 +866,14 @@ const App = () => {
         if (isBlock && tagName !== 'BR') {
            const lastSeg = segments[segments.length - 1];
            if (lastSeg && lastSeg.text !== '\n') segments.push({ type: 'text', text: '\n' });
+
+           if (['P', 'DIV', 'H1', 'H2'].includes(tagName)) {
+               const checkLast = segments[segments.length - 1];
+               const checkSecondLast = segments[segments.length - 2];
+               if (!(checkLast?.text === '\n' && checkSecondLast?.text === '\n')) {
+                   segments.push({ type: 'text', text: '\n' });
+               }
+           }
         }
         if (tagName === 'BR') segments.push({ type: 'text', text: '\n' });
       } else if (node.nodeType === Node.TEXT_NODE) {
