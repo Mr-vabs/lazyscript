@@ -1053,20 +1053,32 @@ const App = () => {
             }
         });
         
+        // Line-level vertical drift to simulate organic spacing between lines
+        // Sometimes lines bunch up or spread apart
+        const lineDriftY = (rng() - 0.5) * skewFactor * 3 * SCALE;
+        cursorY += lineDriftY;
+
+        // Vary the height of this line
+        maxLineHeight += (rng() - 0.5) * skewFactor * 4 * SCALE;
+
         // --- DRAW CODE LEFT BORDER ---
         if (isCodeBlockLine) {
             ctx.beginPath();
             ctx.strokeStyle = "#000";
             ctx.lineWidth = 3 * SCALE;
             ctx.moveTo(currentMarginLeft, cursorY);
-            ctx.lineTo(currentMarginLeft, cursorY + CURRENT_LINE_HEIGHT);
+            ctx.lineTo(currentMarginLeft, cursorY + maxLineHeight);
             ctx.stroke();
             cursorX += 15 * SCALE; // Indent for code
         }
 
         const availableWidth = CANVAS_WIDTH - (currentMarginLeft + currentMarginRight);
-        if ((dominantAlign as string) === 'center') cursorX = currentMarginLeft + (availableWidth - lineTextWidth) / 2;
-        else if ((dominantAlign as string) === 'right') cursorX = currentMarginLeft + (availableWidth - lineTextWidth);
+
+        // Add random horizontal drift for aligned text to break perfect math alignment
+        const alignDriftX = dominantAlign !== 'left' ? (rng() - 0.5) * skewFactor * 10 * SCALE : 0;
+
+        if ((dominantAlign as string) === 'center') cursorX = currentMarginLeft + (availableWidth - lineTextWidth) / 2 + alignDriftX;
+        else if ((dominantAlign as string) === 'right') cursorX = currentMarginLeft + (availableWidth - lineTextWidth) + alignDriftX;
 
         line.forEach(seg => {
 
@@ -1087,7 +1099,20 @@ const App = () => {
                const img = new Image();
                img.crossOrigin = 'anonymous';
                img.onload = () => {
-                 ctx.drawImage(img, drawX, drawY, drawW, drawH);
+                 ctx.save();
+                 // Apply slight rotation, scale, and translation jitter for organic placement
+                 const imgRot = (rng() - 0.5) * skewFactor * 0.05;
+                 const imgScaleX = 1 + (rng() - 0.5) * skewFactor * 0.05;
+                 const imgScaleY = 1 + (rng() - 0.5) * skewFactor * 0.05;
+                 const imgJitterX = (rng() - 0.5) * skewFactor * 2 * SCALE;
+                 const imgJitterY = (rng() - 0.5) * skewFactor * 2 * SCALE;
+
+                 ctx.translate(drawX + drawW/2 + imgJitterX, drawY + drawH/2 + imgJitterY);
+                 ctx.rotate(imgRot);
+                 ctx.scale(imgScaleX, imgScaleY);
+                 ctx.drawImage(img, -drawW/2, -drawH/2, drawW, drawH);
+                 ctx.restore();
+
                  // Selection handles (optional)
                  // ctx.fillStyle = "rgba(59, 130, 246, 0.5)";
                  // ctx.fillRect(drawX - 5, drawY - 5, 10, 10);
@@ -1111,8 +1136,24 @@ const App = () => {
                            let fullHeight = rowHeight;
                            if (cell.rowSpan > 1) fullHeight = rowHeight * cell.rowSpan;
 
+                           // Jitter functions for lines
+                           const getJitter = () => (rng() - 0.5) * skewFactor * 3 * SCALE;
+
                            ctx.beginPath(); ctx.strokeStyle = "#444"; ctx.lineWidth = 1.5;
-                           ctx.rect(tableX, tableY, fullWidth, fullHeight);
+
+                           // Draw 4 distinct jittered lines for imperfect tables
+                           // Top
+                           ctx.moveTo(tableX + getJitter(), tableY + getJitter());
+                           ctx.lineTo(tableX + fullWidth + getJitter(), tableY + getJitter());
+                           // Right
+                           ctx.moveTo(tableX + fullWidth + getJitter(), tableY + getJitter());
+                           ctx.lineTo(tableX + fullWidth + getJitter(), tableY + fullHeight + getJitter());
+                           // Bottom
+                           ctx.moveTo(tableX + fullWidth + getJitter(), tableY + fullHeight + getJitter());
+                           ctx.lineTo(tableX + getJitter(), tableY + fullHeight + getJitter());
+                           // Left
+                           ctx.moveTo(tableX + getJitter(), tableY + fullHeight + getJitter());
+                           ctx.lineTo(tableX + getJitter(), tableY + getJitter());
                            ctx.stroke();
 
                            ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
@@ -1122,7 +1163,10 @@ const App = () => {
 
                            const lines = cell.lines || [cell.text];
                            const lineHeight = CURRENT_LINE_HEIGHT * 1.2;
-                           let startY = tableY + (rowHeight / 2) - ((lines.length * lineHeight) / 2) + (lineHeight * 0.6);
+
+                           // Introduce random padding variation per cell
+                           const cellPaddingY = (rng() - 0.5) * skewFactor * 4 * SCALE;
+                           let startY = tableY + (rowHeight / 2) - ((lines.length * lineHeight) / 2) + (lineHeight * 0.6) + cellPaddingY;
 
                            lines.forEach((line) => {
                                ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
@@ -1134,31 +1178,50 @@ const App = () => {
                                    for (let i = 0; i < line.length; i++) textWidth += (ctx as CanvasRenderingContext2D).measureText(line[i]).width + (spacingFactor * SCALE);
                                }
 
-                               let textX = tableX + (10*SCALE);
-                               if (cell.align === 'center') textX = tableX + (fullWidth/2) - (textWidth/2);
-                               if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE);
+                               // Random padding X variation
+                               const cellPaddingX = (rng() - 0.5) * skewFactor * 5 * SCALE;
+                               let textX = tableX + (10*SCALE) + cellPaddingX;
+                               if (cell.align === 'center') textX = tableX + (fullWidth/2) - (textWidth/2) + cellPaddingX;
+                               if (cell.align === 'right') textX = tableX + fullWidth - textWidth - (10*SCALE) + cellPaddingX;
 
-                               const rY = (rng() - 0.5) * (skewFactor * SCALE);
-                               const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-                               const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
-                               const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
+                               let currentX = textX;
+                               const textSkew = seg.skew !== undefined ? seg.skew : skewFactor;
 
-                               ctx.save();
-                               if ('letterSpacing' in ctx) {
-                                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
+                               for (let i = 0; i < line.length; i++) {
+                                   const char = line[i];
+                                   const charWidth = ctx.measureText(char).width;
+
+                                   const progress = line.length > 1 ? i / (line.length - 1) : 0.5;
+                                   const pressureCurve = Math.sin(progress * Math.PI);
+
+                                   const rY = (rng() - 0.5) * (textSkew * 1.5 * SCALE);
+                                   const rRot = (rng() - 0.5) * (textSkew * 0.2);
+                                   const rScaleX = 1 + (rng() - 0.5) * textSkew * 0.1;
+                                   const rScaleY = 1 + (rng() - 0.5) * textSkew * 0.1;
+
+                                   const charSpacing = (spacingFactor * SCALE) + ((rng() - 0.5) * textSkew * 2);
+
+                                   ctx.save();
+
+                                   const baseAlpha = Math.max(0.4, 1 - (rng() * textSkew * 0.2));
+                                   ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.6 + 0.4 * pressureCurve));
+
+                                   const baselineDrift = (rng() - 0.5) * textSkew * SCALE;
+
+                                   ctx.translate(currentX + charWidth/2, startY + rY + baselineDrift);
+                                   ctx.rotate(rRot);
+                                   ctx.scale(rScaleX, rScaleY);
+                                   ctx.fillText(char, -charWidth/2, 0);
+
+                                   if (textSkew > 1 && rng() > (0.8 - 0.3 * pressureCurve)) {
+                                       ctx.globalAlpha = ctx.globalAlpha * 0.8;
+                                       ctx.strokeText(char, -charWidth/2, 0);
+                                   }
+
+                                   ctx.restore();
+
+                                   currentX += charWidth + charSpacing;
                                }
-                               ctx.globalAlpha = Math.max(0.4, 1 - (rng() * (seg.skew !== undefined ? seg.skew : skewFactor) * 0.2));
-                               ctx.translate(textX, startY + rY);
-                               ctx.rotate(rRot);
-                               ctx.scale(rScaleX, rScaleY);
-                               ctx.fillText(line, 0, 0);
-                               if ((seg.skew !== undefined ? seg.skew : skewFactor) > 1 && rng() > 0.5) {
-                                   ctx.strokeText(line, 0, 0);
-                               }
-                               if ('letterSpacing' in ctx) {
-                                   (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = '0px';
-                               }
-                               ctx.restore();
 
                                startY += lineHeight;
                            });
@@ -1176,42 +1239,55 @@ const App = () => {
               ctx.lineWidth = 0.5;
 
               let textWidth = 0;
-              if ('letterSpacing' in ctx) {
-                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
-                  textWidth = ctx.measureText(seg.text).width;
-              } else {
-                  for (let i = 0; i < seg.text.length; i++) {
-                      textWidth += (ctx as CanvasRenderingContext2D).measureText(seg.text[i]).width + (spacingFactor * SCALE);
+              let currentX = cursorX;
+
+              const textSkew = seg.skew !== undefined ? seg.skew : skewFactor;
+
+              for (let i = 0; i < seg.text.length; i++) {
+                  const char = seg.text[i];
+                  const charWidth = ctx.measureText(char).width;
+
+                  const progress = seg.text.length > 1 ? i / (seg.text.length - 1) : 0.5;
+                  const pressureCurve = Math.sin(progress * Math.PI); // 0 -> 1 -> 0
+
+                  const rY = (rng() - 0.5) * (textSkew * 1.5 * SCALE);
+                  const rRot = (rng() - 0.5) * (textSkew * 0.2);
+                  const rScaleX = 1 + (rng() - 0.5) * textSkew * 0.1;
+                  const rScaleY = 1 + (rng() - 0.5) * textSkew * 0.1;
+
+                  const charSpacing = (spacingFactor * SCALE) + ((rng() - 0.5) * textSkew * 2);
+
+                  ctx.save();
+
+                  // Base alpha logic with pressure curve applied
+                  const baseAlpha = Math.max(0.4, 1 - (rng() * textSkew * 0.2));
+                  ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.6 + 0.4 * pressureCurve));
+
+                  // Baseline drift per character instead of whole word
+                  const baselineDrift = (rng() - 0.5) * textSkew * SCALE;
+
+                  ctx.translate(currentX + charWidth/2, cursorY + rY + baselineDrift);
+                  ctx.rotate(rRot);
+                  ctx.scale(rScaleX, rScaleY);
+                  ctx.fillText(char, -charWidth/2, 0);
+
+                  if (textSkew > 1 && rng() > (0.8 - 0.3 * pressureCurve)) {
+                      ctx.globalAlpha = ctx.globalAlpha * 0.8;
+                      ctx.strokeText(char, -charWidth/2, 0);
                   }
+
+                  ctx.restore();
+
+                  currentX += charWidth + charSpacing;
               }
 
-              const rY = (rng() - 0.5) * (skewFactor * SCALE);
-              const rRot = (rng() - 0.5) * (skewFactor * 0.15);
-              const rScaleX = 1 + (rng() - 0.5) * skewFactor * 0.1;
-              const rScaleY = 1 + (rng() - 0.5) * skewFactor * 0.1;
-
-              ctx.save();
-              if ('letterSpacing' in ctx) {
-                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = `${spacingFactor * SCALE}px`;
-              }
-              ctx.globalAlpha = Math.max(0.4, 1 - (rng() * (seg.skew !== undefined ? seg.skew : skewFactor) * 0.2));
-              ctx.translate(cursorX + textWidth/2, cursorY + rY);
-              ctx.rotate(rRot);
-              ctx.scale(rScaleX, rScaleY);
-              ctx.fillText(seg.text, -textWidth/2, 0);
-              if ((seg.skew !== undefined ? seg.skew : skewFactor) > 1 && rng() > 0.5) {
-                  ctx.strokeText(seg.text, -textWidth/2, 0);
-              }
-              if ('letterSpacing' in ctx) {
-                  (ctx as CanvasRenderingContext2D & {letterSpacing: string}).letterSpacing = '0px';
-              }
-              ctx.restore();
+              textWidth = currentX - cursorX;
 
               if (seg.isUnderline) {
                   ctx.beginPath(); ctx.strokeStyle = seg.color || '#000'; ctx.lineWidth = 1.5;
                   ctx.moveTo(cursorX, cursorY + 5); ctx.lineTo(cursorX + textWidth, cursorY + 5 + (rng()*2)); ctx.stroke();
               }
-              cursorX += textWidth + (spacingFactor * SCALE);
+              cursorX = currentX;
            }
         });
         cursorY += maxLineHeight;
