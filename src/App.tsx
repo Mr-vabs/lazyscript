@@ -742,11 +742,11 @@ const App = () => {
                      }
 
                      const wrappedLines: string[] = [];
-                     const words = text.split(/(\s+)/);
+                     const words = text.split(" ");
                      let currentLine = "";
                      words.forEach(word => {
                          if(word === "") return;
-                         const testLine = currentLine + word;
+                         const testLine = currentLine + (currentLine ? " " : "") + word;
                          const testWidth = measureTextWithSpacing(testLine, `normal ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`, spacingFactor);
                          if(testWidth > fullWidth - (20 * SCALE) && currentLine !== "") {
                              wrappedLines.push(currentLine.trim());
@@ -873,8 +873,8 @@ const App = () => {
            if (['P', 'DIV', 'H1', 'H2', 'PRE', 'UL', 'OL'].includes(tagName)) {
                const checkLast = segments[segments.length - 1];
                const checkSecondLast = segments[segments.length - 2];
-               if (!(checkLast?.text === '\n' && checkSecondLast?.text === '\n')) {
-                   segments.push({ type: 'text', text: '\n' });
+               if (!(checkLast?.text === "\n" && checkSecondLast?.text === "\n")) {
+                   segments.push({ type: "text", text: "\n" });
                }
            }
         }
@@ -923,7 +923,7 @@ const App = () => {
     };
 
     segments.forEach(seg => {
-      if (seg.text === '\n') { flushLine(); return; }
+      if (seg.text === '\n') { if (currentLine.length === 0) { currentY += CURRENT_LINE_HEIGHT; checkPageBreak(CURRENT_LINE_HEIGHT); } else { flushLine(); } return; }
       
 
       if (seg.type === 'table' || (seg.type === 'image' && !seg.isInline)) {
