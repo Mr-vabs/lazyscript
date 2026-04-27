@@ -867,7 +867,7 @@ const App = () => {
            const lastSeg = segments[segments.length - 1];
            if (lastSeg && lastSeg.text !== '\n') segments.push({ type: 'text', text: '\n' });
 
-           if (['P', 'DIV', 'H1', 'H2'].includes(tagName)) {
+           if (['P', 'DIV', 'H1', 'H2', 'PRE', 'UL', 'OL'].includes(tagName)) {
                const checkLast = segments[segments.length - 1];
                const checkSecondLast = segments[segments.length - 2];
                if (!(checkLast?.text === '\n' && checkSecondLast?.text === '\n')) {
