@@ -115,7 +115,7 @@ type ProjectFile = {
     version: string;
     htmlContent: string;
     drawings?: DrawingData;
-    settings: { skew: number; lineOpacity: number; scanEffect: boolean; fontSize: number; paperType: PaperType; activeFontIndex: number; spacing: number; }
+    settings: { skew: number; lineOpacity: number; scanEffect: boolean; fontSize: number; paperType: PaperType; activeFontIndex: number; spacing: number; pressure: 'low' | 'medium' | 'high'; }
 };
 type ToastType = { id: number; message: string; type: 'info' | 'error' | 'success' };
 
@@ -127,11 +127,13 @@ const App = () => {
   const [scanEffect, setScanEffect] = useState(false);
   const [lineOpacity, setLineOpacity] = useState(0.4); 
   const [baseFontSize, setBaseFontSize] = useState(18);
+  const [pressureLevel, setPressureLevel] = useState<'low'|'medium'|'high'>('medium');
 
   // UI Debounce State
   const [uiSkewFactor, setUiSkewFactor] = useState(1.5);
   const [uiFontSize, setUiFontSize] = useState(18);
   const [uiSpacingFactor, setUiSpacingFactor] = useState(0);
+  const [uiPressureLevel, setUiPressureLevel] = useState<'low'|'medium'|'high'>('medium');
 
   // Custom Margins State
   const [marginTop, setMarginTop] = useState(60);
@@ -144,9 +146,10 @@ const App = () => {
       setSkewFactor(uiSkewFactor);
       setBaseFontSize(uiFontSize);
       setSpacingFactor(uiSpacingFactor);
+      setPressureLevel(uiPressureLevel);
     }, 200);
     return () => clearTimeout(timer);
-  }, [uiSkewFactor, uiFontSize, uiSpacingFactor]);
+  }, [uiSkewFactor, uiFontSize, uiSpacingFactor, uiPressureLevel]);
 
   const [paperType, setPaperType] = useState<PaperType>('lined');
   const [activeFontIndex, setActiveFontIndex] = useState(0); 
@@ -612,7 +615,7 @@ const App = () => {
       if (pages.length > 0) {
           triggerParse();
       }
-  }, [baseFontSize, spacingFactor, activeFontIndex]);
+  }, [baseFontSize, spacingFactor, activeFontIndex, pressureLevel]);
 
   // DRAG AND DROP FIX: Force re-parse on drop
   useEffect(() => {
@@ -1203,8 +1206,17 @@ const App = () => {
 
                                    ctx.save();
 
-                                   const baseAlpha = Math.max(0.4, 1 - (rng() * textSkew * 0.2));
-                                   ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.6 + 0.4 * pressureCurve));
+                                   // Keep alpha mostly opaque so it doesn't look like a shade/ghosting effect
+                                   // Add slight random variation
+                                   ctx.globalAlpha = Math.max(0.85, 1 - (rng() * 0.15));
+
+                                   // Adjust line thickness to simulate real pen pressure
+                                   // Base stroke is 0.5, modify depending on pressureLevel
+                                   let pressureMultiplier = 1.0;
+                                   if (pressureLevel === 'low') pressureMultiplier = 0.5;
+                                   else if (pressureLevel === 'high') pressureMultiplier = 1.8;
+
+                                   ctx.lineWidth = 0.3 + (pressureCurve * 0.5 * pressureMultiplier);
 
                                    const baselineDrift = (rng() - 0.5) * textSkew * SCALE;
 
@@ -1213,8 +1225,8 @@ const App = () => {
                                    ctx.scale(rScaleX, rScaleY);
                                    ctx.fillText(char, -charWidth/2, 0);
 
-                                   if (textSkew > 1 && rng() > (0.8 - 0.3 * pressureCurve)) {
-                                       ctx.globalAlpha = ctx.globalAlpha * 0.8;
+                                   // We stroke text to give it bulk, mimicking pressure
+                                   if (pressureMultiplier > 0) {
                                        ctx.strokeText(char, -charWidth/2, 0);
                                    }
 
@@ -1259,9 +1271,16 @@ const App = () => {
 
                   ctx.save();
 
-                  // Base alpha logic with pressure curve applied
-                  const baseAlpha = Math.max(0.4, 1 - (rng() * textSkew * 0.2));
-                  ctx.globalAlpha = Math.min(1.0, baseAlpha * (0.6 + 0.4 * pressureCurve));
+                  // Keep alpha mostly opaque so it doesn't look like a shade/ghosting effect
+                  ctx.globalAlpha = Math.max(0.85, 1 - (rng() * 0.15));
+
+                  // Adjust line thickness to simulate real pen pressure
+                  // Base stroke is 0.5, modify depending on pressureLevel
+                  let pressureMultiplier = 1.0;
+                  if (pressureLevel === 'low') pressureMultiplier = 0.5;
+                  else if (pressureLevel === 'high') pressureMultiplier = 1.8;
+
+                  ctx.lineWidth = 0.3 + (pressureCurve * 0.5 * pressureMultiplier);
 
                   // Baseline drift per character instead of whole word
                   const baselineDrift = (rng() - 0.5) * textSkew * SCALE;
@@ -1271,8 +1290,8 @@ const App = () => {
                   ctx.scale(rScaleX, rScaleY);
                   ctx.fillText(char, -charWidth/2, 0);
 
-                  if (textSkew > 1 && rng() > (0.8 - 0.3 * pressureCurve)) {
-                      ctx.globalAlpha = ctx.globalAlpha * 0.8;
+                  // We stroke text to give it bulk, mimicking pressure
+                  if (pressureMultiplier > 0) {
                       ctx.strokeText(char, -charWidth/2, 0);
                   }
 
@@ -1330,7 +1349,7 @@ const App = () => {
           version: '18.2',
           htmlContent: editorRef.current?.innerHTML || '',
           drawings: drawings,
-          settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor }
+          settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor, pressure: pressureLevel }
       };
       const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
       const a = document.createElement('a');
@@ -1354,6 +1373,7 @@ const App = () => {
               setBaseFontSize(project.settings.fontSize || 22); setUiFontSize(project.settings.fontSize || 22);
               setPaperType(project.settings.paperType || 'lined'); setActiveFontIndex(project.settings.activeFontIndex || 0);
               setSpacingFactor(project.settings.spacing || 0); setUiSpacingFactor(project.settings.spacing || 0);
+              setPressureLevel(project.settings.pressure || 'medium'); setUiPressureLevel(project.settings.pressure || 'medium');
               if (project.drawings) setDrawings(project.drawings);
               triggerParse();
               showToast("Loaded successfully!", "success");
@@ -1590,13 +1610,21 @@ const App = () => {
                     <input type="range" min="0" max="3" step="0.5" value={uiSkewFactor} onChange={(e) => { const v = parseFloat(e.target.value); setUiSkewFactor(v); applySelectionStyle('skew', v.toString(), () => setUiSkewFactor(v)); }} />
                     <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{uiFontSize}px</span></div>
                     <input type="range" min="14" max="32" step="1" value={uiFontSize} onChange={(e) => { const v = parseInt(e.target.value); setUiFontSize(v); applySelectionStyle('fontSize', v.toString(), () => setUiFontSize(v)); }} />
+                    <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Pen Pressure</span> <span>{uiPressureLevel.toUpperCase()}</span></div>
+                    <div className="flex gap-1 border rounded-md overflow-hidden">
+                        {(['low', 'medium', 'high'] as const).map(level => (
+                            <button key={level} onMouseDown={preventFocusLoss} onClick={() => setUiPressureLevel(level)} className={`flex-1 py-1 text-xs font-medium transition-colors ${uiPressureLevel === level ? 'bg-blue-600 text-white' : (isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-white text-slate-600 hover:bg-slate-100')}`}>
+                                {level.charAt(0).toUpperCase() + level.slice(1)}
+                            </button>
+                        ))}
+                    </div>
                 </div>
                 <div className="space-y-3">
                       <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{uiSpacingFactor}px</span></div>
                       <input type="range" min="-2" max="10" step="0.5" value={uiSpacingFactor} onChange={(e) => setUiSpacingFactor(parseFloat(e.target.value))} />
                       <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Line Opacity</span> <span>{Math.round(lineOpacity*100)}%</span></div>
                       <input type="range" min="0" max="1" step="0.1" value={lineOpacity} onChange={(e) => setLineOpacity(parseFloat(e.target.value))} />
-                    <div className="flex gap-2 pt-1">
+                    <div className="flex gap-2 pt-1 mt-6">
                         <button onMouseDown={preventFocusLoss} onClick={() => setPaperType(prev => prev === 'lined' ? 'grid' : prev === 'grid' ? 'blank' : 'lined')} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>
                              {paperType === 'lined' ? <><AlignJustify size={14}/> Lined</> : paperType === 'grid' ? <><Grid3X3 size={14}/> Grid</> : <><Type size={14}/> Blank</>}
                         </button>
