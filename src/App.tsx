@@ -18,7 +18,7 @@ const A4_WIDTH = 595;
 const A4_HEIGHT = 842;
 const CANVAS_WIDTH = A4_WIDTH * SCALE;
 const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
-const MARGIN_X = 50 * SCALE;
+const MARGIN_X = 35 * SCALE; // Reduced from 50 to 35 for better page width utilization
 const MARGIN_Y = 60 * SCALE;
 
 // ============================================================================
@@ -114,6 +114,7 @@ type TextSegment = {
   src?: string;
   height?: number;
   imageRatio?: number;
+  imgElement?: HTMLImageElement;
   tableData?: TableData;
   isCodeLine?: boolean;
 };
@@ -169,7 +170,7 @@ const App: React.FC = () => {
   const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
   const [inkColor, setInkColor] = useState('#000000');
   const [humanizeFactor, setHumanizeFactor] = useState(3);
-  const [zoom, setZoom] = useState(0.7);
+  const [zoom, setZoom] = useState(0.4); // Changed default zoom to 40%
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [selectedAspectRatio, setSelectedAspectRatio] = useState(ASPECT_RATIOS[1]);
@@ -184,6 +185,12 @@ const App: React.FC = () => {
   const isInitializedRef = useRef(false);
   const lastContentRef = useRef<string>('');
   const lastSettingsRef = useRef({ fontSize: 18, spacing: 0, fontIndex: 0 });
+  const pagesLengthRef = useRef(0);
+
+  // Keep ref synced to avoid dependency loops in triggerParse
+  useEffect(() => {
+    pagesLengthRef.current = pages.length;
+  }, [pages]);
 
   // Computed
   const CURRENT_FONT_SIZE = baseFontSize * SCALE;
@@ -246,7 +253,7 @@ const App: React.FC = () => {
     if (clearConfirmStage === 2) {
       if (editorRef.current) {
         editorRef.current.innerHTML = "<p><br></p>";
-        triggerParse();
+        triggerParse(true);
       }
       setDrawings({});
       setClearConfirmStage(0);
@@ -551,24 +558,6 @@ const App: React.FC = () => {
   // ==========================================================================
   // PARSER
   // ==========================================================================
-  const triggerParse = useCallback(() => {
-    if (!editorRef.current) return;
-
-    const currentContent = editorRef.current.innerHTML;
-    if (currentContent === lastContentRef.current && pages.length > 0) {
-      return;
-    }
-    lastContentRef.current = currentContent;
-
-    setIsProcessing(true);
-    if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
-    parseTimeoutRef.current = window.setTimeout(() => {
-      parseContentToPages(editorRef.current!);
-      setIsProcessing(false);
-      parseTimeoutRef.current = null;
-    }, 300);
-  }, [pages.length]);
-
   const parseContentToPages = useCallback((root: HTMLElement) => {
     const ctx = document.createElement('canvas').getContext('2d')!;
     const segments: TextSegment[] = [];
@@ -742,7 +731,8 @@ const App: React.FC = () => {
             src: imgEl.src,
             width: width * SCALE,
             height: height * SCALE,
-            imageRatio: ratio
+            imageRatio: ratio,
+            imgElement: imgEl // Pass the actual DOM element for synchronous rendering
           });
           return;
         }
@@ -758,7 +748,12 @@ const App: React.FC = () => {
         if (tagName === 'OL') newListContext = { type: 'ol', index: 1 };
 
         let newColor = el.style.color || el.getAttribute('color') || style.color;
-        const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || parseInt(el.style.fontWeight) > 600) || style.isBold;
+        
+        // Comprehensive check for bold text to capture AI inline styles
+        const fontWeight = el.style.fontWeight;
+        const isStyleBold = fontWeight === 'bold' || fontWeight === '700' || fontWeight === '800' || parseInt(fontWeight) > 600;
+        const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || isStyleBold) || style.isBold;
+        
         const newUnderline = (tagName === 'U' || el.style.textDecoration === 'underline') || style.isUnderline;
 
         if (tagName === 'LI' && listContext) {
@@ -810,15 +805,18 @@ const App: React.FC = () => {
       return false;
     };
 
-    const flushLine = () => {
-      if (currentLine.length === 0) return;
+    // Modified to force flushing for empty lines
+    const flushLine = (isEmptyLine = false) => {
+      if (currentLine.length === 0 && !isEmptyLine) return;
       let maxH = CURRENT_LINE_HEIGHT;
       currentLine.forEach(s => {
         if (s.type === 'image' && s.height) maxH = Math.max(maxH, s.height + 20);
         if (s.type === 'table' && s.tableData) maxH = Math.max(maxH, s.tableData.rows.length * CURRENT_LINE_HEIGHT * 1.5);
       });
       checkPageBreak(maxH);
-      currentLines.push(currentLine);
+      if (currentLine.length > 0 || isEmptyLine) {
+        currentLines.push(currentLine);
+      }
       currentLine = [];
       currentX = MARGIN_X;
       currentY += maxH;
@@ -826,7 +824,7 @@ const App: React.FC = () => {
 
     segments.forEach(seg => {
       if (seg.text === '\n') {
-        flushLine();
+        flushLine(true); // Force flush for newlines
         return;
       }
       if (seg.type === 'table' || seg.type === 'image') {
@@ -862,6 +860,25 @@ const App: React.FC = () => {
     setPages(finalPages);
   }, [CURRENT_FONT_SIZE, CURRENT_FONT, CURRENT_LINE_HEIGHT, AVAILABLE_WIDTH, spacingFactor]);
 
+  // Modified to take a force flag and removed pages.length dependency to avoid observer loops
+  const triggerParse = useCallback((force = false) => {
+    if (!editorRef.current) return;
+
+    const currentContent = editorRef.current.innerHTML;
+    if (!force && currentContent === lastContentRef.current && pagesLengthRef.current > 0) {
+      return;
+    }
+    lastContentRef.current = currentContent;
+
+    setIsProcessing(true);
+    if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
+    parseTimeoutRef.current = window.setTimeout(() => {
+      parseContentToPages(editorRef.current!);
+      setIsProcessing(false);
+      parseTimeoutRef.current = null;
+    }, 300);
+  }, [parseContentToPages]);
+
   // ==========================================================================
   // TRIGGER REPARSE ON FONT/SPACING CHANGES
   // ==========================================================================
@@ -872,11 +889,11 @@ const App: React.FC = () => {
       lastSettingsRef.current.fontIndex !== activeFontIndex
     );
 
-    if (settingsChanged && pages.length > 0) {
+    if (settingsChanged && pagesLengthRef.current > 0) {
       lastSettingsRef.current = { fontSize: baseFontSize, spacing: spacingFactor, fontIndex: activeFontIndex };
-      triggerParse();
+      triggerParse(true); // Force reparse on settings change to reflow text
     }
-  }, [baseFontSize, spacingFactor, activeFontIndex]);
+  }, [baseFontSize, spacingFactor, activeFontIndex, triggerParse]);
 
   // ==========================================================================
   // RENDERER
@@ -958,23 +975,17 @@ const App: React.FC = () => {
         }
 
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
-        
-        // --- FIX 2: Re-assert dominantAlign as AlignType to stop TypeScript from narrowing it ---
         const finalAlign = dominantAlign as AlignType;
         
         if (finalAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
         else if (finalAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
-          if (seg.type === 'image' && seg.src) {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
+          if (seg.type === 'image' && seg.imgElement) {
+            // Draw image synchronously using the passed DOM element
             const drawW = seg.width || (200 * SCALE);
             const drawH = seg.height || (150 * SCALE);
-            img.onload = () => {
-              ctx.drawImage(img, cursorX, cursorY, drawW, drawH);
-            };
-            img.src = seg.src;
+            ctx.drawImage(seg.imgElement, cursorX, cursorY, drawW, drawH);
             maxLineHeight = drawH + 20;
           } else if (seg.type === 'table' && seg.tableData) {
             const { rows, colWidths } = seg.tableData;
@@ -1153,7 +1164,7 @@ const App: React.FC = () => {
         setSpacingFactor(project.settings.spacing || 0);
         setHumanizeFactor(project.settings.humanize || 3);
         if (project.drawings) setDrawings(project.drawings);
-        triggerParse();
+        triggerParse(true);
         showToast("Loaded successfully!", "success");
       } catch {
         showToast("Invalid project file.", "error");
@@ -1225,7 +1236,7 @@ const App: React.FC = () => {
     setTimeout(() => {
       if (editorRef.current && editorRef.current.innerHTML.trim() === '') {
         editorRef.current.innerHTML = DEFAULT_CONTENT;
-        triggerParse();
+        triggerParse(true);
       }
     }, 100);
   }, [triggerParse]);
@@ -1350,7 +1361,6 @@ const App: React.FC = () => {
                 <FileUp size={16} /> <span className="hidden sm:inline">Import</span>
               </button>
               
-              {/* --- FIX 1: Add inputs for both importing projects AND images --- */}
               <input type="file" ref={fileInputRef} onChange={loadProject} accept=".lazy,.json,.azm" className="hidden" />
               <input type="file" ref={imageInputRef} onChange={handleImageFileSelect} accept="image/*" className="hidden" />
               
@@ -1365,10 +1375,11 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* MAIN CONTENT */}
-      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 pb-8 pt-28 px-4">
-        {/* EDITOR PANEL */}
-        <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+      {/* MAIN CONTENT - Added lg:h-[calc(100vh-120px)] to sync viewports */}
+      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 pb-8 pt-28 px-4 lg:h-[calc(100vh-120px)]">
+        
+        {/* EDITOR PANEL - Added lg:h-full to keep panel bound */}
+        <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors lg:h-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
           <div className={`p-4 border-b transition-colors shrink-0 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'} flex flex-col gap-4`}>
             {/* Row 1: Text Formatting */}
             <div className="flex flex-wrap gap-3 justify-between items-center">
@@ -1478,26 +1489,35 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* PREVIEW PANEL */}
-        <div ref={containerRef} className={`w-full lg:w-1/2 overflow-y-auto rounded-xl shadow-inner border p-4 sm:p-6 flex flex-col items-center gap-4 sm:gap-6 max-h-[calc(100vh-180px)] ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-200 border-slate-300'}`}>
-          {/* Zoom Controls */}
+        {/* PREVIEW PANEL - Added lg:h-full, removed max-h constraint */}
+        <div ref={containerRef} className={`w-full lg:w-1/2 overflow-y-auto rounded-xl shadow-inner border p-4 sm:p-6 flex flex-col items-center gap-4 sm:gap-6 lg:h-full ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-200 border-slate-300'}`}>
+          {/* Zoom Controls - Updated bounds to go smaller */}
           <div className="flex items-center gap-4 mb-2 shrink-0 sticky top-0 bg-inherit z-10 py-2 rounded-lg">
-            <button onClick={() => setZoom(Math.max(0.4, zoom - 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomOut size={18} /></button>
+            <button onClick={() => setZoom(Math.max(0.2, zoom - 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomOut size={18} /></button>
             <span className="text-sm font-medium whitespace-nowrap">{Math.round(zoom * 100)}%</span>
             <button onClick={() => setZoom(Math.min(1.2, zoom + 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomIn size={18} /></button>
-            <button onClick={() => setZoom(0.7)} className="p-2 rounded hover:bg-slate-300 text-xs font-medium">Reset</button>
+            <button onClick={() => setZoom(0.4)} className="p-2 rounded hover:bg-slate-300 text-xs font-medium">Reset</button>
           </div>
 
-          {/* Canvas Pages */}
-          <div className="flex flex-col items-center gap-4 sm:gap-6 w-full">
+          {/* Canvas Pages - Wrapping canvas inside scaled div to fix layout gaps */}
+          <div className="flex flex-col items-center w-full">
             {pages.map((_, i) => (
-              <div key={i} className="relative group shrink-0" style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', marginBottom: `${(1 - zoom) * 50}px` }}>
+              <div 
+                key={i} 
+                className="relative group shrink-0" 
+                style={{ 
+                  width: CANVAS_WIDTH * zoom, 
+                  height: CANVAS_HEIGHT * zoom, 
+                  marginBottom: '24px' // Consistent gap regardless of zoom
+                }}
+              >
                 <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i + 1}</span>
                 <canvas
                   ref={el => { canvasRefs.current[i] = el; }}
                   width={CANVAS_WIDTH}
                   height={CANVAS_HEIGHT}
-                  className={`bg-white shadow-2xl rounded-sm transition-transform duration-300 ${isDrawingMode ? 'cursor-crosshair touch-none' : 'hover:scale-[1.02]'}`}
+                  className={`bg-white shadow-2xl rounded-sm transition-transform duration-300 origin-top-left ${isDrawingMode ? 'cursor-crosshair touch-none' : 'hover:scale-[1.01]'}`}
+                  style={{ transform: `scale(${zoom})` }}
                   onPointerDown={(e) => startDrawing(i, e)}
                   onPointerMove={(e) => drawMove(i, e)}
                   onPointerUp={(e) => stopDrawing(i, e)}
