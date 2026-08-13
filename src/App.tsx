@@ -21,7 +21,6 @@ const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
 const MARGIN_X = 50 * SCALE;
 const MARGIN_Y = 60 * SCALE;
 
-// more fonts added and space issues fixed!
 // ============================================================================
 // CONTENT TEMPLATES
 // ============================================================================
@@ -179,6 +178,7 @@ const App: React.FC = () => {
   const editorRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const parseTimeoutRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isInitializedRef = useRef(false);
@@ -418,7 +418,7 @@ const App: React.FC = () => {
   }, [selectedImage]);
 
   const openImageModal = useCallback(() => {
-    fileInputRef.current?.click();
+    imageInputRef.current?.click();
   }, []);
 
   const handleImageFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -958,8 +958,12 @@ const App: React.FC = () => {
         }
 
         const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
-        if (dominantAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
-        else if (dominantAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
+        
+        // --- FIX 2: Re-assert dominantAlign as AlignType to stop TypeScript from narrowing it ---
+        const finalAlign = dominantAlign as AlignType;
+        
+        if (finalAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
+        else if (finalAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
           if (seg.type === 'image' && seg.src) {
@@ -1345,7 +1349,11 @@ const App: React.FC = () => {
               <button onClick={() => fileInputRef.current?.click()} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                 <FileUp size={16} /> <span className="hidden sm:inline">Import</span>
               </button>
+              
+              {/* --- FIX 1: Add inputs for both importing projects AND images --- */}
               <input type="file" ref={fileInputRef} onChange={loadProject} accept=".lazy,.json,.azm" className="hidden" />
+              <input type="file" ref={imageInputRef} onChange={handleImageFileSelect} accept="image/*" className="hidden" />
+              
               <button onClick={saveProject} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                 <Save size={16} /> <span className="hidden sm:inline">Save</span>
               </button>
