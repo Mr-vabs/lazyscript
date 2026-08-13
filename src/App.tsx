@@ -21,6 +21,7 @@ const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
 const MARGIN_X = 50 * SCALE;
 const MARGIN_Y = 60 * SCALE;
 
+// more fonts added and space issues fixed!
 // ============================================================================
 // CONTENT TEMPLATES
 // ============================================================================
