@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main # Or whichever branch you want to trigger the APK build from
-      - 'android-build'
+      - 'android-build*'
 
 jobs:
   dispatch:
