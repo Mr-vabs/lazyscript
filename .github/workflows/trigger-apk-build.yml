@@ -4,14 +4,14 @@ on:
   push:
     branches:
       - main # Or whichever branch you want to trigger the APK build from
-      - 'android-build-*'
+      - 'android-build'
 
 jobs:
   dispatch:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Remote Repository Dispatch
-        uses: peter-evans/repository-dispatch@v2
+        uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.DISPATCH_PAT }}
           repository: Mr-vabs/testApp
