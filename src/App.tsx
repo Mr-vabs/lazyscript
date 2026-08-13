@@ -18,7 +18,7 @@ const A4_WIDTH = 595;
 const A4_HEIGHT = 842;
 const CANVAS_WIDTH = A4_WIDTH * SCALE;
 const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
-const MARGIN_X = 35 * SCALE; // Reduced from 50 to 35 for better page width utilization
+const MARGIN_X = 35 * SCALE;
 const MARGIN_Y = 60 * SCALE;
 
 // ============================================================================
@@ -34,7 +34,7 @@ const DEFAULT_CONTENT = `
 <li>Click the <b>Robot Icon</b> to copy a prompt for AI.</li>
 </ul>
 <p><strong>Code Example:</strong></p>
-<pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000000;">
+<pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000f55;">
 #include &lt;stdio.h&gt;
 int main() {
 printf("Hello World");
@@ -50,7 +50,7 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
 - Questions: BLACK (#000000) and Bold.
 - Answers: BLUE (#000f55) and Standard weight.
 3. **Code Snippets (CRITICAL):**
-- Wrap in <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000000;">
+- Wrap in <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000f55;">
 - **ESCAPING:** Replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
 4. **Tables:**
 - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
@@ -138,6 +138,7 @@ type ProjectFile = {
     activeFontIndex: number;
     spacing: number;
     humanize: number;
+    pressure?: number; // legacy
   };
 };
 
@@ -170,7 +171,7 @@ const App: React.FC = () => {
   const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
   const [inkColor, setInkColor] = useState('#000000');
   const [humanizeFactor, setHumanizeFactor] = useState(3);
-  const [zoom, setZoom] = useState(0.4); // Changed default zoom to 40%
+  const [zoom, setZoom] = useState(0.4);
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [selectedAspectRatio, setSelectedAspectRatio] = useState(ASPECT_RATIOS[1]);
@@ -187,7 +188,7 @@ const App: React.FC = () => {
   const lastSettingsRef = useRef({ fontSize: 18, spacing: 0, fontIndex: 0 });
   const pagesLengthRef = useRef(0);
 
-  // Keep ref synced to avoid dependency loops in triggerParse
+  // Keep ref synced
   useEffect(() => {
     pagesLengthRef.current = pages.length;
   }, [pages]);
@@ -701,17 +702,7 @@ const App: React.FC = () => {
       };
     };
 
-    const processCodeLines = (preEl: HTMLElement) => {
-      const text = preEl.innerText;
-      if (!text) return;
-      const lines = text.split('\n');
-      lines.forEach(line => {
-        segments.push({ type: 'text', text: line, color: '#000000', isCodeLine: true });
-        segments.push({ type: 'text', text: '\n', isCodeLine: true });
-      });
-    };
-
-    const traverse = (node: Node, style: { color: string; isBold: boolean; isUnderline: boolean }, listContext: { type: string; index: number } | null) => {
+    const traverse = (node: Node, style: { color: string; isBold: boolean; isUnderline: boolean }, listContext: { type: string; index: number; isCodeBlock?: boolean } | null) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
         const tagName = el.tagName;
@@ -732,24 +723,20 @@ const App: React.FC = () => {
             width: width * SCALE,
             height: height * SCALE,
             imageRatio: ratio,
-            imgElement: imgEl // Pass the actual DOM element for synchronous rendering
+            imgElement: imgEl
           });
-          return;
-        }
-        if (tagName === 'PRE') {
-          processCodeLines(el);
           return;
         }
         if (tagName === 'BR' && !node.nextSibling && !node.previousSibling) return;
 
-        const isBlock = ['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'TR'].includes(tagName);
+        const isBlock = ['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'TR', 'PRE'].includes(tagName);
         let newListContext = listContext;
         if (tagName === 'UL') newListContext = { type: 'ul', index: 0 };
         if (tagName === 'OL') newListContext = { type: 'ol', index: 1 };
+        if (tagName === 'PRE') newListContext = { type: 'pre', index: 0, isCodeBlock: true };
 
         let newColor = el.style.color || el.getAttribute('color') || style.color;
         
-        // Comprehensive check for bold text to capture AI inline styles
         const fontWeight = el.style.fontWeight;
         const isStyleBold = fontWeight === 'bold' || fontWeight === '700' || fontWeight === '800' || parseInt(fontWeight) > 600;
         const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || isStyleBold) || style.isBold;
@@ -770,7 +757,27 @@ const App: React.FC = () => {
         node.childNodes.forEach(child => {
           if (child.nodeType === Node.TEXT_NODE) {
             const text = child.textContent || "";
-            if (text) segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align });
+            if (text) {
+              if (newListContext?.isCodeBlock) {
+                const lines = text.split('\n');
+                lines.forEach((line, i) => {
+                  if (line !== '') {
+                    segments.push({ type: 'text', text: line, color: newColor, isBold: newBold, isUnderline: newUnderline, isCodeLine: true });
+                  } else if (line === '' && lines.length > 1 && i !== 0) { 
+                    // Skips pushing the invisible space if it's the very first line
+                    segments.push({ type: 'text', text: ' ', color: newColor, isCodeLine: true });
+                  }
+                  
+                  // Skips the newline character if the very first line was completely empty
+                  if (i < lines.length - 1 && !(i === 0 && line === '')) {
+                    segments.push({ type: 'text', text: '\n', isCodeLine: true });
+                  }
+                });
+              } else {
+
+                segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align });
+              }
+            }
           } else {
             traverse(child, { color: newColor, isBold: newBold, isUnderline: newUnderline }, newListContext);
           }
@@ -780,7 +787,9 @@ const App: React.FC = () => {
           const lastSeg = segments[segments.length - 1];
           if (lastSeg && lastSeg.text !== '\n') segments.push({ type: 'text', text: '\n' });
         }
-        if (tagName === 'BR') segments.push({ type: 'text', text: '\n' });
+        if (tagName === 'BR') {
+          segments.push({ type: 'text', text: '\n', isCodeLine: listContext?.isCodeBlock });
+        }
       } else if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent || "";
         if (text) segments.push({ type: 'text', text, color: style.color, isBold: style.isBold, isUnderline: style.isUnderline });
@@ -805,7 +814,6 @@ const App: React.FC = () => {
       return false;
     };
 
-    // Modified to force flushing for empty lines
     const flushLine = (isEmptyLine = false) => {
       if (currentLine.length === 0 && !isEmptyLine) return;
       let maxH = CURRENT_LINE_HEIGHT;
@@ -824,7 +832,7 @@ const App: React.FC = () => {
 
     segments.forEach(seg => {
       if (seg.text === '\n') {
-        flushLine(true); // Force flush for newlines
+        flushLine(true);
         return;
       }
       if (seg.type === 'table' || seg.type === 'image') {
@@ -860,7 +868,6 @@ const App: React.FC = () => {
     setPages(finalPages);
   }, [CURRENT_FONT_SIZE, CURRENT_FONT, CURRENT_LINE_HEIGHT, AVAILABLE_WIDTH, spacingFactor]);
 
-  // Modified to take a force flag and removed pages.length dependency to avoid observer loops
   const triggerParse = useCallback((force = false) => {
     if (!editorRef.current) return;
 
@@ -876,8 +883,14 @@ const App: React.FC = () => {
       parseContentToPages(editorRef.current!);
       setIsProcessing(false);
       parseTimeoutRef.current = null;
-    }, 300);
+    }, 150); // Trimmed delay
   }, [parseContentToPages]);
+
+  // Observer reference to prevent loop disconnects
+  const triggerParseRef = useRef(triggerParse);
+  useEffect(() => {
+    triggerParseRef.current = triggerParse;
+  }, [triggerParse]);
 
   // ==========================================================================
   // TRIGGER REPARSE ON FONT/SPACING CHANGES
@@ -891,7 +904,7 @@ const App: React.FC = () => {
 
     if (settingsChanged && pagesLengthRef.current > 0) {
       lastSettingsRef.current = { fontSize: baseFontSize, spacing: spacingFactor, fontIndex: activeFontIndex };
-      triggerParse(true); // Force reparse on settings change to reflow text
+      triggerParse(true);
     }
   }, [baseFontSize, spacingFactor, activeFontIndex, triggerParse]);
 
@@ -982,11 +995,16 @@ const App: React.FC = () => {
 
         line.forEach(seg => {
           if (seg.type === 'image' && seg.imgElement) {
-            // Draw image synchronously using the passed DOM element
             const drawW = seg.width || (200 * SCALE);
             const drawH = seg.height || (150 * SCALE);
-            ctx.drawImage(seg.imgElement, cursorX, cursorY, drawW, drawH);
-            maxLineHeight = drawH + 20;
+            
+            // Image Load Guard applied
+            if (seg.imgElement.complete && seg.imgElement.naturalWidth > 0) {
+              ctx.drawImage(seg.imgElement, cursorX, cursorY, drawW, drawH);
+              maxLineHeight = drawH + 20;
+            } else {
+              seg.imgElement.decode().then(() => triggerParseRef.current(true)).catch(() => {});
+            }
           } else if (seg.type === 'table' && seg.tableData) {
             const { rows, colWidths } = seg.tableData;
             let tableY = cursorY;
@@ -1123,7 +1141,7 @@ const App: React.FC = () => {
   // ==========================================================================
   const saveProject = useCallback(() => {
     const project: ProjectFile = {
-      version: '18.2',
+      version: '19.0', // Bumped version to 19.0
       htmlContent: editorRef.current?.innerHTML || '',
       drawings: drawings,
       settings: {
@@ -1162,7 +1180,9 @@ const App: React.FC = () => {
         setPaperType(project.settings.paperType || 'lined');
         setActiveFontIndex(project.settings.activeFontIndex || 0);
         setSpacingFactor(project.settings.spacing || 0);
-        setHumanizeFactor(project.settings.humanize || 3);
+        // Added legacy fallback for 'pressure' -> 'humanize'
+        setHumanizeFactor(project.settings.humanize ?? project.settings.pressure ?? 3);
+        
         if (project.drawings) setDrawings(project.drawings);
         triggerParse(true);
         showToast("Loaded successfully!", "success");
@@ -1250,8 +1270,8 @@ const App: React.FC = () => {
     const observer = new MutationObserver(() => {
       clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
-        triggerParse();
-      }, 500);
+        if (triggerParseRef.current) triggerParseRef.current();
+      }, 150); // Trimmed debounce delay
     });
 
     observer.observe(editor, { childList: true, subtree: true, characterData: true });
@@ -1260,7 +1280,7 @@ const App: React.FC = () => {
       observer.disconnect();
       clearTimeout(debounceTimer);
     };
-  }, [triggerParse]);
+  }, []); // Empty deps to fix observer re-subscription churn
 
   // ==========================================================================
   // STYLES
@@ -1348,7 +1368,7 @@ const App: React.FC = () => {
           <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
             <span className="text-blue-600 text-2xl sm:text-3xl">✍</span>
             <span>LazyScript</span>
-            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v18.2</span>
+            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v19.0</span>
             {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
           </h1>
           <div className="flex gap-2">
@@ -1375,10 +1395,10 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* MAIN CONTENT - Added lg:h-[calc(100vh-120px)] to sync viewports */}
+      {/* MAIN CONTENT */}
       <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 pb-8 pt-28 px-4 lg:h-[calc(100vh-120px)]">
         
-        {/* EDITOR PANEL - Added lg:h-full to keep panel bound */}
+        {/* EDITOR PANEL */}
         <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors lg:h-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
           <div className={`p-4 border-b transition-colors shrink-0 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'} flex flex-col gap-4`}>
             {/* Row 1: Text Formatting */}
@@ -1489,9 +1509,9 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        {/* PREVIEW PANEL - Added lg:h-full, removed max-h constraint */}
+        {/* PREVIEW PANEL */}
         <div ref={containerRef} className={`w-full lg:w-1/2 overflow-y-auto rounded-xl shadow-inner border p-4 sm:p-6 flex flex-col items-center gap-4 sm:gap-6 lg:h-full ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-200 border-slate-300'}`}>
-          {/* Zoom Controls - Updated bounds to go smaller */}
+          {/* Zoom Controls */}
           <div className="flex items-center gap-4 mb-2 shrink-0 sticky top-0 bg-inherit z-10 py-2 rounded-lg">
             <button onClick={() => setZoom(Math.max(0.2, zoom - 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomOut size={18} /></button>
             <span className="text-sm font-medium whitespace-nowrap">{Math.round(zoom * 100)}%</span>
@@ -1499,7 +1519,7 @@ const App: React.FC = () => {
             <button onClick={() => setZoom(0.4)} className="p-2 rounded hover:bg-slate-300 text-xs font-medium">Reset</button>
           </div>
 
-          {/* Canvas Pages - Wrapping canvas inside scaled div to fix layout gaps */}
+          {/* Canvas Pages */}
           <div className="flex flex-col items-center w-full">
             {pages.map((_, i) => (
               <div 
@@ -1508,7 +1528,7 @@ const App: React.FC = () => {
                 style={{ 
                   width: CANVAS_WIDTH * zoom, 
                   height: CANVAS_HEIGHT * zoom, 
-                  marginBottom: '24px' // Consistent gap regardless of zoom
+                  marginBottom: '24px'
                 }}
               >
                 <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i + 1}</span>
