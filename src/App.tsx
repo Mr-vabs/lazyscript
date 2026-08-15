@@ -51,7 +51,7 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
 - Answers: BLUE (#000f55) and Standard weight.
 3. **Code Snippets (CRITICAL):**
 - Wrap in <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000f55;">
-- **ESCAPING:** Replace all '<' with '&lt;' and '>' with '&gt;' inside the code.
+- **ESCAPING:** Replace all '&lt;' with '&amp;lt;' and '&gt;' with '&amp;gt;' inside the code.
 4. **Tables:**
 - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
 - Cells: <td style="border: 1px solid black; padding: 5px; color: #000f55;">
@@ -117,6 +117,7 @@ type TextSegment = {
   imgElement?: HTMLImageElement;
   tableData?: TableData;
   isCodeLine?: boolean;
+  codeBorderColor?: string; // New field to carry the dynamic color
 };
 
 type PageData = { lines: TextSegment[][] };
@@ -702,7 +703,8 @@ const App: React.FC = () => {
       };
     };
 
-    const traverse = (node: Node, style: { color: string; isBold: boolean; isUnderline: boolean }, listContext: { type: string; index: number; isCodeBlock?: boolean } | null) => {
+    // Modified traverse signature to pass the dynamic border color context down the tree
+    const traverse = (node: Node, style: { color: string; isBold: boolean; isUnderline: boolean }, listContext: { type: string; index: number; isCodeBlock?: boolean; borderColor?: string } | null) => {
       if (node.nodeType === Node.ELEMENT_NODE) {
         const el = node as HTMLElement;
         const tagName = el.tagName;
@@ -733,7 +735,12 @@ const App: React.FC = () => {
         let newListContext = listContext;
         if (tagName === 'UL') newListContext = { type: 'ul', index: 0 };
         if (tagName === 'OL') newListContext = { type: 'ol', index: 1 };
-        if (tagName === 'PRE') newListContext = { type: 'pre', index: 0, isCodeBlock: true };
+        
+        // Dynamically capture the border color from the <pre> inline styles
+        if (tagName === 'PRE') {
+          const borderColor = el.style.borderLeftColor || el.style.borderColor || '#000';
+          newListContext = { type: 'pre', index: 0, isCodeBlock: true, borderColor };
+        }
 
         let newColor = el.style.color || el.getAttribute('color') || style.color;
         
@@ -762,19 +769,17 @@ const App: React.FC = () => {
                 const lines = text.split('\n');
                 lines.forEach((line, i) => {
                   if (line !== '') {
-                    segments.push({ type: 'text', text: line, color: newColor, isBold: newBold, isUnderline: newUnderline, isCodeLine: true });
+                    // Pass the captured codeBorderColor to each segment
+                    segments.push({ type: 'text', text: line, color: newColor, isBold: newBold, isUnderline: newUnderline, isCodeLine: true, codeBorderColor: newListContext?.borderColor });
                   } else if (line === '' && lines.length > 1 && i !== 0) { 
-                    // Skips pushing the invisible space if it's the very first line
-                    segments.push({ type: 'text', text: ' ', color: newColor, isCodeLine: true });
+                    segments.push({ type: 'text', text: ' ', color: newColor, isCodeLine: true, codeBorderColor: newListContext?.borderColor });
                   }
                   
-                  // Skips the newline character if the very first line was completely empty
                   if (i < lines.length - 1 && !(i === 0 && line === '')) {
-                    segments.push({ type: 'text', text: '\n', isCodeLine: true });
+                    segments.push({ type: 'text', text: '\n', isCodeLine: true, codeBorderColor: newListContext?.borderColor });
                   }
                 });
               } else {
-
                 segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align });
               }
             }
@@ -788,7 +793,7 @@ const App: React.FC = () => {
           if (lastSeg && lastSeg.text !== '\n') segments.push({ type: 'text', text: '\n' });
         }
         if (tagName === 'BR') {
-          segments.push({ type: 'text', text: '\n', isCodeLine: listContext?.isCodeBlock });
+          segments.push({ type: 'text', text: '\n', isCodeLine: listContext?.isCodeBlock, codeBorderColor: listContext?.borderColor });
         }
       } else if (node.nodeType === Node.TEXT_NODE) {
         const text = node.textContent || "";
@@ -883,7 +888,7 @@ const App: React.FC = () => {
       parseContentToPages(editorRef.current!);
       setIsProcessing(false);
       parseTimeoutRef.current = null;
-    }, 150); // Trimmed delay
+    }, 150);
   }, [parseContentToPages]);
 
   // Observer reference to prevent loop disconnects
@@ -968,9 +973,14 @@ const App: React.FC = () => {
         let isCodeBlockLine = false;
         let dominantAlign: AlignType = 'left';
         let lineTextWidth = 0;
+        let currentCodeBorderColor = '#000'; // Default fallback
 
         line.forEach(seg => {
-          if (seg.isCodeLine) isCodeBlockLine = true;
+          if (seg.isCodeLine) {
+            isCodeBlockLine = true;
+            // Dynamically assign the captured color
+            if (seg.codeBorderColor) currentCodeBorderColor = seg.codeBorderColor;
+          }
           if (seg.type === 'text' && seg.width) {
             lineTextWidth += seg.width;
             if (seg.align) dominantAlign = seg.align as AlignType;
@@ -978,12 +988,16 @@ const App: React.FC = () => {
         });
 
         if (isCodeBlockLine) {
-          ctx.beginPath();
-          ctx.strokeStyle = "#000";
-          ctx.lineWidth = 3 * SCALE;
-          ctx.moveTo(MARGIN_X, cursorY);
-          ctx.lineTo(MARGIN_X, cursorY + CURRENT_LINE_HEIGHT);
-          ctx.stroke();
+          // If the border color isn't completely transparent, draw the line
+          if (currentCodeBorderColor !== 'transparent' && currentCodeBorderColor !== 'rgba(0, 0, 0, 0)') {
+            ctx.beginPath();
+            ctx.strokeStyle = currentCodeBorderColor;
+            ctx.lineWidth = 3 * SCALE;
+            ctx.moveTo(MARGIN_X, cursorY);
+            ctx.lineTo(MARGIN_X, cursorY + CURRENT_LINE_HEIGHT);
+            ctx.stroke();
+          }
+          // We always apply the 15px indentation regardless of line visibility
           cursorX += 15 * SCALE;
         }
 
@@ -998,7 +1012,6 @@ const App: React.FC = () => {
             const drawW = seg.width || (200 * SCALE);
             const drawH = seg.height || (150 * SCALE);
             
-            // Image Load Guard applied
             if (seg.imgElement.complete && seg.imgElement.naturalWidth > 0) {
               ctx.drawImage(seg.imgElement, cursorX, cursorY, drawW, drawH);
               maxLineHeight = drawH + 20;
@@ -1141,7 +1154,7 @@ const App: React.FC = () => {
   // ==========================================================================
   const saveProject = useCallback(() => {
     const project: ProjectFile = {
-      version: '19.0', // Bumped version to 19.0
+      version: '19.0',
       htmlContent: editorRef.current?.innerHTML || '',
       drawings: drawings,
       settings: {
@@ -1180,7 +1193,6 @@ const App: React.FC = () => {
         setPaperType(project.settings.paperType || 'lined');
         setActiveFontIndex(project.settings.activeFontIndex || 0);
         setSpacingFactor(project.settings.spacing || 0);
-        // Added legacy fallback for 'pressure' -> 'humanize'
         setHumanizeFactor(project.settings.humanize ?? project.settings.pressure ?? 3);
         
         if (project.drawings) setDrawings(project.drawings);
@@ -1271,7 +1283,7 @@ const App: React.FC = () => {
       clearTimeout(debounceTimer);
       debounceTimer = window.setTimeout(() => {
         if (triggerParseRef.current) triggerParseRef.current();
-      }, 150); // Trimmed debounce delay
+      }, 150);
     });
 
     observer.observe(editor, { childList: true, subtree: true, characterData: true });
@@ -1280,7 +1292,7 @@ const App: React.FC = () => {
       observer.disconnect();
       clearTimeout(debounceTimer);
     };
-  }, []); // Empty deps to fix observer re-subscription churn
+  }, []); 
 
   // ==========================================================================
   // STYLES
@@ -1399,7 +1411,7 @@ const App: React.FC = () => {
       <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-8 pb-8 pt-28 px-4 lg:h-[calc(100vh-120px)]">
         
         {/* EDITOR PANEL */}
-        <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors lg:h-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+        <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors h-[45vh] lg:h-full ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
           <div className={`p-4 border-b transition-colors shrink-0 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'} flex flex-col gap-4`}>
             {/* Row 1: Text Formatting */}
             <div className="flex flex-wrap gap-3 justify-between items-center">
