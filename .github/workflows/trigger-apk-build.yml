@@ -13,7 +13,7 @@ jobs:
       - name: Trigger Remote Repository Dispatch
         uses: peter-evans/repository-dispatch@v3
         with:
-          token: ${{ secrets.DISPATCH_PAT }}
+          token: ${{ secrets.DISPATCH_PAT || secrets.GITHUB_TOKEN }}
           repository: Mr-vabs/testApp
           event-type: trigger-apk-build
           client-payload: '{"sha": "${{ github.sha }}"}'
