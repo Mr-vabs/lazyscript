@@ -51,7 +51,7 @@ const AI_SYSTEM_PROMPT = `You are an assignment writer for a handwriting tool.
 - Answers: BLUE (#000f55) and Standard weight.
 3. **Code Snippets (CRITICAL):**
 - Wrap in <pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; margin: 10px 0; color: #000f55;">
-- **ESCAPING:** Replace all '&lt;' with '&amp;lt;' and '&gt;' with '&amp;gt;' inside the code.
+- **ESCAPING:** Replace all '&lt;' with '&lt;' and '&gt;' with '&gt;' inside the code.
 4. **Tables:**
 - Use <table style="border-collapse: collapse; width: 100%; border: 1px solid black; margin: 10px 0;">
 - Cells: <td style="border: 1px solid black; padding: 5px; color: #000f55;">
