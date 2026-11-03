@@ -1,7 +1,6 @@
 // LaTeX subset -> box layout -> drawn on the canvas in the handwriting font.
 // Every box carries ascent/descent, so formulas sit on the text baseline instead of being pasted in as images.
-import { fontStr } from './config';
-import type { Settings } from './config';
+import { Settings, fontStr } from './config';
 export interface Box { w: number; a: number; d: number; draw: (c: CanvasRenderingContext2D, x: number, y: number, j: (k: number) => number) => void }
 interface N { t: string; [k: string]: any }
 

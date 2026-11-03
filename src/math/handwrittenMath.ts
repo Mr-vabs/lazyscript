@@ -12,8 +12,7 @@ const SYMBOLS: Record<string, string> = {
 
 class Parser {
   private i = 0;
-  private readonly source: string;
-  constructor(source: string) { this.source = source; }
+  constructor(private readonly source: string) {}
   parse(): Node { return this.row(); }
   private row(stopAtBrace = false): Node {
     const children: Node[] = [];

@@ -1,5 +1,4 @@
-import { DEFAULTS } from '../engine/config';
-import type { Settings } from '../engine/config';
+import { Settings, DEFAULTS } from '../engine/config';
 const KEY = 'lazyscript:v2';
 export function loadDraft(): { s: Settings; html: string } | null {
   try { const o = JSON.parse(localStorage.getItem(KEY) || 'null'); return o ? { s: { ...DEFAULTS, ...o.s }, html: o.html || '' } : null; } catch { return null; }

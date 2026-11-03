@@ -1,10 +1,8 @@
 // Tokens -> items -> pages. Every item is a whole number of ruled lines tall, so text never drifts off the lines
 // after a formula, table or image. Lines containing tall maths grow by whole lines and keep the baseline on a rule.
-import { W, H, ML, MR, MT, MB, AVAIL, lineH, fontStr, RATIOS } from './config';
-import type { Settings } from './config';
+import { W, H, ML, MR, MT, MB, AVAIL, Settings, lineH, fontStr, RATIOS } from './config';
 import { tokens } from './tokens';
-import { buildMath } from './math';
-import type { Box } from './math';
+import { Box, buildMath } from './math';
 export interface MathAt { box: Box; x: number; c: string | null }
 export interface Item { kind: 'line' | 'row' | 'img'; n: number; y: number; base: number; [k: string]: any }
 const mc = document.createElement('canvas').getContext('2d')!;
