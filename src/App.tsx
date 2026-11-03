@@ -86,7 +86,7 @@ const ASPECT_RATIOS = [
 // ============================================================================
 // TYPES
 // ============================================================================
-type SegmentType = 'text' | 'image' | 'table';
+type SegmentType = 'text' | 'image' | 'formula' | 'table';
 type PaperType = 'lined' | 'grid' | 'blank';
 type AlignType = 'left' | 'center' | 'right';
 
@@ -115,6 +115,7 @@ type TextSegment = {
   height?: number;
   imageRatio?: number;
   imgElement?: HTMLImageElement;
+  displayFormula?: boolean;
   tableData?: TableData;
   isCodeLine?: boolean;
   codeBorderColor?: string; // New field to carry the dynamic color
@@ -145,6 +146,87 @@ type ProjectFile = {
 
 type ToastType = { id: number; message: string; type: 'info' | 'error' | 'success' };
 
+const APP_VERSION = '21.0.0';
+const MAX_PROJECT_BYTES = 12 * 1024 * 1024;
+const MAX_PROJECT_PAGES = 200;
+
+// MathJax is loaded on demand so the editor stays lightweight until formulas are used.
+type MathJaxApi = { tex2svgPromise: (tex: string, options?: { display?: boolean }) => Promise<HTMLElement> };
+declare global { interface Window { MathJax?: MathJaxApi; __lazyMathJaxLoading?: Promise<MathJaxApi>; } }
+
+function loadMathJax(): Promise<MathJaxApi> {
+  if (window.MathJax?.tex2svgPromise) return Promise.resolve(window.MathJax);
+  if (window.__lazyMathJaxLoading) return window.__lazyMathJaxLoading;
+  window.MathJax = window.MathJax || ({} as MathJaxApi);
+  const loading = new Promise<MathJaxApi>((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-svg.js';
+    script.async = true;
+    script.onload = () => {
+      const api = window.MathJax;
+      if (api && typeof api.tex2svgPromise === 'function') resolve(api);
+      else reject(new Error('MathJax did not initialise.'));
+    };
+    script.onerror = () => reject(new Error('Could not load the formula engine. Check your internet connection.'));
+    document.head.appendChild(script);
+  });
+  window.__lazyMathJaxLoading = loading;
+  return loading;
+}
+
+function svgToImage(svg: SVGSVGElement, fontPx: number): { image: HTMLImageElement; width: number; height: number } {
+  const viewBox = svg.getAttribute('viewBox')?.trim().split(/[ ,]+/).map(Number);
+  if (!viewBox || viewBox.length !== 4 || !viewBox.every(Number.isFinite)) throw new Error('The formula could not be measured.');
+  const [, , vbWidth, vbHeight] = viewBox;
+  const width = Math.max(12, (vbWidth / 1000) * fontPx);
+  const height = Math.max(12, (vbHeight / 1000) * fontPx);
+  const clone = svg.cloneNode(true) as SVGSVGElement;
+  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width', `${width}px`);
+  clone.setAttribute('height', `${height}px`);
+  clone.style.overflow = 'visible';
+  const source = new XMLSerializer().serializeToString(clone);
+  const image = new Image();
+  image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+  return { image, width: width * SCALE, height: height * SCALE };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function validateProject(value: unknown): ProjectFile {
+  if (!isRecord(value)) throw new Error('The file is not a valid LazyScript project.');
+  if (typeof value.htmlContent !== 'string' || value.htmlContent.length > 8_000_000) throw new Error('The document content is missing or too large.');
+  if (!isRecord(value.settings)) throw new Error('Project settings are missing.');
+  const raw = value.settings;
+  const numberOr = (v: unknown, fallback: number, min: number, max: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+  const paper = raw.paperType === 'grid' || raw.paperType === 'blank' ? raw.paperType : 'lined';
+  const fontIndex = Math.round(numberOr(raw.activeFontIndex, 0, 0, FONT_OPTIONS.length - 1));
+  const drawings: DrawingData = {};
+  if (isRecord(value.drawings)) {
+    for (const [key, strokes] of Object.entries(value.drawings)) {
+      const page = Number(key);
+      if (!Number.isInteger(page) || page < 0 || page >= MAX_PROJECT_PAGES || !Array.isArray(strokes)) continue;
+      drawings[page] = strokes.slice(0, 5000).filter((stroke): stroke is Stroke => {
+        if (!isRecord(stroke) || typeof stroke.color !== 'string' || typeof stroke.width !== 'number' || !Array.isArray(stroke.points)) return false;
+        return stroke.points.length <= 10000 && stroke.points.every(point => isRecord(point) && typeof point.x === 'number' && Number.isFinite(point.x) && typeof point.y === 'number' && Number.isFinite(point.y));
+      }).map(stroke => ({ ...stroke, width: Math.min(40, Math.max(0.5, stroke.width)), points: stroke.points.map(point => ({ x: point.x, y: point.y })) }));
+    }
+  }
+  return {
+    version: typeof value.version === 'string' ? value.version : 'legacy',
+    htmlContent: value.htmlContent, drawings,
+    settings: {
+      skew: numberOr(raw.skew, 1.5, 0, 3), lineOpacity: numberOr(raw.lineOpacity, 0.4, 0, 1),
+      scanEffect: raw.scanEffect === true, fontSize: numberOr(raw.fontSize, 18, 10, 48),
+      paperType: paper, activeFontIndex: fontIndex, spacing: numberOr(raw.spacing, 0, -2, 10),
+      humanize: numberOr(raw.humanize ?? raw.pressure, 3, 0, 5)
+    }
+  };
+}
+
 // ============================================================================
 // MAIN APP COMPONENT
 // ============================================================================
@@ -162,6 +244,7 @@ const App: React.FC = () => {
   const [activeFontIndex, setActiveFontIndex] = useState(0);
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
   const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
   const [isFontMenuOpen, setIsFontMenuOpen] = useState(false);
   const [isCaseMenuOpen, setIsCaseMenuOpen] = useState(false);
@@ -176,12 +259,17 @@ const App: React.FC = () => {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [selectedAspectRatio, setSelectedAspectRatio] = useState(ASPECT_RATIOS[1]);
+  const [isFormulaModalOpen, setIsFormulaModalOpen] = useState(false);
+  const [formulaLatex, setFormulaLatex] = useState('\\frac{-b \pm \sqrt{b^2-4ac}}{2a}');
+  const [formulaDisplayMode, setFormulaDisplayMode] = useState(false);
+  const [imageFit, setImageFit] = useState<'contain' | 'cover'>('contain');
 
   // Refs
   const editorRef = useRef<HTMLDivElement>(null);
   const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const selectedFormulaRef = useRef<HTMLElement | null>(null);
   const parseTimeoutRef = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const isInitializedRef = useRef(false);
@@ -401,6 +489,13 @@ const App: React.FC = () => {
   // ==========================================================================
   const handleEditorClick = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
+    const formula = target.closest('[data-ls-math]') as HTMLElement | null;
+    if (formula) {
+      selectedFormulaRef.current = formula;
+      setFormulaLatex(formula.getAttribute('data-ls-latex') || '');
+      setFormulaDisplayMode(formula.getAttribute('data-ls-display') === 'true');
+      setIsFormulaModalOpen(true);
+    }
     if (target.tagName === 'IMG') {
       if (selectedImage) selectedImage.style.outline = 'none';
       const img = target as HTMLImageElement;
@@ -417,7 +512,11 @@ const App: React.FC = () => {
   }, [selectedImage]);
 
   const deleteSelectedImage = useCallback(() => {
-    if (selectedImage) {
+    if (selectedFormulaRef.current) {
+      selectedFormulaRef.current.remove();
+      selectedFormulaRef.current = null;
+      triggerParse();
+    } else if (selectedImage) {
       selectedImage.remove();
       setSelectedImage(null);
       triggerParse();
@@ -448,7 +547,13 @@ const App: React.FC = () => {
       img.setAttribute('data-ratio', String(selectedAspectRatio.ratio));
       img.setAttribute('data-width', String(selectedAspectRatio.w));
       img.setAttribute('data-height', String(selectedAspectRatio.h));
-      img.style.maxWidth = `${selectedAspectRatio.w}px`;
+      img.setAttribute('data-fit', imageFit);
+      img.width = selectedAspectRatio.w;
+      img.height = selectedAspectRatio.h;
+      img.style.width = `${selectedAspectRatio.w}px`;
+      img.style.height = `${selectedAspectRatio.h}px`;
+      img.style.maxWidth = '100%';
+      img.style.objectFit = imageFit;
       img.style.display = "block";
       img.style.margin = "10px auto";
       if (editorRef.current) {
@@ -470,7 +575,61 @@ const App: React.FC = () => {
       showToast("Image inserted!", "success");
     };
     reader.readAsDataURL(pendingImageFile);
-  }, [pendingImageFile, selectedAspectRatio, showToast]);
+  }, [pendingImageFile, selectedAspectRatio, imageFit, showToast]);
+
+  const insertFormula = useCallback(async () => {
+    const latex = formulaLatex.trim();
+    if (!latex) { showToast('Enter a formula first.', 'error'); return; }
+    try {
+      const mathJax = await loadMathJax();
+      const rendered = await mathJax.tex2svgPromise(latex, { display: formulaDisplayMode });
+      const svg = rendered.querySelector('svg');
+      if (!svg) throw new Error('The formula engine returned no SVG output.');
+      const { image, width, height } = svgToImage(svg, Math.max(16, baseFontSize * 1.15));
+      await image.decode();
+      const wrapper = document.createElement(formulaDisplayMode ? 'div' : 'span');
+      wrapper.setAttribute('data-ls-math', 'true');
+      wrapper.setAttribute('data-ls-latex', latex);
+      wrapper.setAttribute('data-ls-display', String(formulaDisplayMode));
+      wrapper.setAttribute('data-ls-width', String(width));
+      wrapper.setAttribute('data-ls-height', String(height));
+      wrapper.style.display = formulaDisplayMode ? 'block' : 'inline-block';
+      wrapper.style.textAlign = formulaDisplayMode ? 'center' : 'initial';
+      wrapper.style.verticalAlign = 'middle';
+      wrapper.contentEditable = 'false';
+      const editorSvg = svg.cloneNode(true) as SVGSVGElement;
+      editorSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      editorSvg.setAttribute('width', `${width / SCALE}px`);
+      editorSvg.setAttribute('height', `${height / SCALE}px`);
+      editorSvg.style.maxWidth = '100%';
+      editorSvg.style.verticalAlign = 'middle';
+      wrapper.appendChild(editorSvg);
+      const editor = editorRef.current;
+      if (!editor) return;
+      if (selectedFormulaRef.current && editor.contains(selectedFormulaRef.current)) {
+        selectedFormulaRef.current.replaceWith(wrapper);
+        selectedFormulaRef.current = null;
+      } else {
+        editor.focus();
+        const selection = window.getSelection();
+        if (selection?.rangeCount && editor.contains(selection.anchorNode)) {
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+        range.insertNode(wrapper);
+        range.setStartAfter(wrapper);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+        } else editor.appendChild(wrapper);
+      }
+      if (formulaDisplayMode) wrapper.insertAdjacentElement('afterend', document.createElement('br'));
+      triggerParse(true);
+      setIsFormulaModalOpen(false);
+      showToast('Formula inserted/updated. Its LaTeX source is preserved in the project.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Could not render this formula.', 'error');
+    }
+  }, [formulaLatex, formulaDisplayMode, baseFontSize, showToast]);
 
   // ==========================================================================
   // TABLE LOGIC
@@ -709,6 +868,16 @@ const App: React.FC = () => {
         const el = node as HTMLElement;
         const tagName = el.tagName;
 
+        if (el.hasAttribute('data-ls-math')) {
+          const svg = el.querySelector('svg');
+          if (svg) {
+            const { image, width, height } = svgToImage(svg as SVGSVGElement, Math.max(16, baseFontSize * 1.15));
+            const storedWidth = Number(el.getAttribute('data-ls-width')) || width;
+            const storedHeight = Number(el.getAttribute('data-ls-height')) || height;
+            segments.push({ type: 'formula', src: image.src, width: storedWidth, height: storedHeight, imgElement: image, displayFormula: el.getAttribute('data-ls-display') === 'true' });
+          }
+          return;
+        }
         if (tagName === 'TABLE') {
           const tableSeg = processTable(el);
           if (tableSeg) segments.push(tableSeg);
@@ -823,7 +992,7 @@ const App: React.FC = () => {
       if (currentLine.length === 0 && !isEmptyLine) return;
       let maxH = CURRENT_LINE_HEIGHT;
       currentLine.forEach(s => {
-        if (s.type === 'image' && s.height) maxH = Math.max(maxH, s.height + 20);
+        if ((s.type === 'image' || s.type === 'formula') && s.height) maxH = Math.max(maxH, s.height + 12);
         if (s.type === 'table' && s.tableData) maxH = Math.max(maxH, s.tableData.rows.length * CURRENT_LINE_HEIGHT * 1.5);
       });
       checkPageBreak(maxH);
@@ -840,14 +1009,21 @@ const App: React.FC = () => {
         flushLine(true);
         return;
       }
-      if (seg.type === 'table' || seg.type === 'image') {
+      if (seg.type === 'table' || seg.type === 'image' || (seg.type === 'formula' && seg.displayFormula)) {
         if (currentLine.length > 0) flushLine();
         let height = 0;
         if (seg.type === 'table') height = (seg.tableData!.rows.length * (CURRENT_LINE_HEIGHT * 1.2)) + 20;
-        else if (seg.type === 'image') height = seg.height! + 20;
+        else if (seg.type === 'image' || seg.type === 'formula') height = seg.height! + 12;
         checkPageBreak(height);
         currentLines.push([seg]);
         currentY += height;
+        return;
+      }
+      if (seg.type === 'formula') {
+        const formulaWidth = seg.width || 40;
+        if (currentX + formulaWidth > CANVAS_WIDTH - MARGIN_X) flushLine();
+        currentLine.push(seg);
+        currentX += formulaWidth + 4;
         return;
       }
       if (seg.type === 'text') {
@@ -984,6 +1160,8 @@ const App: React.FC = () => {
           if (seg.type === 'text' && seg.width) {
             lineTextWidth += seg.width;
             if (seg.align) dominantAlign = seg.align as AlignType;
+          } else if (seg.type === 'formula' && seg.width) {
+            lineTextWidth += seg.width + 4;
           }
         });
 
@@ -1008,13 +1186,30 @@ const App: React.FC = () => {
         else if (finalAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
 
         line.forEach(seg => {
-          if (seg.type === 'image' && seg.imgElement) {
+          if ((seg.type === 'image' || seg.type === 'formula') && seg.imgElement) {
             const drawW = seg.width || (200 * SCALE);
             const drawH = seg.height || (150 * SCALE);
             
             if (seg.imgElement.complete && seg.imgElement.naturalWidth > 0) {
-              ctx.drawImage(seg.imgElement, cursorX, cursorY, drawW, drawH);
-              maxLineHeight = drawH + 20;
+              if (seg.type === 'formula' && seg.displayFormula) cursorX = MARGIN_X + (AVAILABLE_WIDTH - drawW) / 2;
+              const drawY = seg.type === 'formula' ? cursorY + Math.max(0, (CURRENT_LINE_HEIGHT - drawH) / 2) : cursorY;
+              if (seg.type === 'image' && seg.imgElement.naturalWidth && seg.imgElement.naturalHeight) {
+                const fit = seg.imgElement.getAttribute('data-fit') || 'contain';
+                const sourceRatio = seg.imgElement.naturalWidth / seg.imgElement.naturalHeight;
+                const targetRatio = drawW / drawH;
+                if (fit === 'cover') {
+                  let sx = 0, sy = 0, sw = seg.imgElement.naturalWidth, sh = seg.imgElement.naturalHeight;
+                  if (sourceRatio > targetRatio) { sw = sh * targetRatio; sx = (seg.imgElement.naturalWidth - sw) / 2; }
+                  else { sh = sw / targetRatio; sy = (seg.imgElement.naturalHeight - sh) / 2; }
+                  ctx.drawImage(seg.imgElement, sx, sy, sw, sh, cursorX, drawY, drawW, drawH);
+                } else {
+                  const scale = Math.min(drawW / seg.imgElement.naturalWidth, drawH / seg.imgElement.naturalHeight);
+                  const w = seg.imgElement.naturalWidth * scale, h = seg.imgElement.naturalHeight * scale;
+                  ctx.drawImage(seg.imgElement, cursorX + (drawW - w) / 2, drawY + (drawH - h) / 2, w, h);
+                }
+              } else ctx.drawImage(seg.imgElement, cursorX, drawY, drawW, drawH);
+              maxLineHeight = Math.max(maxLineHeight, drawH + 12);
+              cursorX += drawW + (seg.type === 'formula' ? 4 : 0);
             } else {
               seg.imgElement.decode().then(() => triggerParseRef.current(true)).catch(() => {});
             }
@@ -1154,52 +1349,51 @@ const App: React.FC = () => {
   // ==========================================================================
   const saveProject = useCallback(() => {
     const project: ProjectFile = {
-      version: '19.0',
+      version: APP_VERSION,
       htmlContent: editorRef.current?.innerHTML || '',
-      drawings: drawings,
-      settings: {
-        skew: skewFactor,
-        lineOpacity,
-        scanEffect,
-        fontSize: baseFontSize,
-        paperType,
-        activeFontIndex,
-        spacing: spacingFactor,
-        humanize: humanizeFactor
-      }
+      drawings,
+      settings: { skew: skewFactor, lineOpacity, scanEffect, fontSize: baseFontSize, paperType, activeFontIndex, spacing: spacingFactor, humanize: humanizeFactor }
     };
     const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'assignment.lazy';
+    a.href = url;
+    a.download = 'lazyscript-project.lazy';
+    document.body.appendChild(a);
     a.click();
-    showToast("Project saved!", "success");
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    showToast('Project saved!', 'success');
   }, [skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings, humanizeFactor, showToast]);
 
   const loadProject = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (file.size > MAX_PROJECT_BYTES) {
+      showToast('Project file is too large (12 MB maximum).', 'error');
+      return;
+    }
     const reader = new FileReader();
+    reader.onerror = () => showToast('Could not read this project file.', 'error');
     reader.onload = (event) => {
       try {
-        const project = JSON.parse(event.target?.result as string) as ProjectFile;
-        if (editorRef.current) {
-          editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent);
-        }
+        const parsed: unknown = JSON.parse(String(event.target?.result ?? ''));
+        const project = validateProject(parsed);
+        if (editorRef.current) editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent);
         setSkewFactor(project.settings.skew);
         setLineOpacity(project.settings.lineOpacity);
         setScanEffect(project.settings.scanEffect);
-        setBaseFontSize(project.settings.fontSize || 18);
-        setPaperType(project.settings.paperType || 'lined');
-        setActiveFontIndex(project.settings.activeFontIndex || 0);
-        setSpacingFactor(project.settings.spacing || 0);
-        setHumanizeFactor(project.settings.humanize ?? project.settings.pressure ?? 3);
-        
-        if (project.drawings) setDrawings(project.drawings);
+        setBaseFontSize(project.settings.fontSize);
+        setPaperType(project.settings.paperType);
+        setActiveFontIndex(project.settings.activeFontIndex);
+        setSpacingFactor(project.settings.spacing);
+        setHumanizeFactor(project.settings.humanize ?? 3);
+        setDrawings(project.drawings || {});
         triggerParse(true);
-        showToast("Loaded successfully!", "success");
-      } catch {
-        showToast("Invalid project file.", "error");
+        showToast(`Project loaded (saved with ${project.version}).`, 'success');
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : 'Invalid project file.', 'error');
       }
     };
     reader.readAsText(file);
@@ -1222,7 +1416,7 @@ const App: React.FC = () => {
       let gray = 0.299 * r + 0.587 * g + 0.114 * b;
       if (gray > 180) gray = 255;
       else gray = gray * 0.8;
-      const noise = (Math.random() - 0.5) * 40;
+      const noise = ((Math.sin(i * 12.9898) * 43758.5453) % 1) * 20;
       gray += noise;
       data[i] = data[i + 1] = data[i + 2] = gray;
     }
@@ -1230,28 +1424,41 @@ const App: React.FC = () => {
     return tempCanvas.toDataURL('image/jpeg', 0.6);
   };
 
-  const downloadPDF = useCallback(() => {
-    const doc = new jsPDF('p', 'pt', [A4_WIDTH, A4_HEIGHT]);
-    showToast("Generating PDF...", "info");
-    setTimeout(() => {
-      pages.forEach((_, i) => {
+  const downloadPDF = useCallback(async () => {
+    if (isProcessing) return;
+    if (pages.length === 0) {
+      showToast('Add some content before exporting.', 'error');
+      return;
+    }
+    setIsProcessing(true);
+    setExportProgress(0);
+    try {
+      // Allow the browser to paint the progress state before canvas encoding begins.
+      await new Promise(resolve => window.setTimeout(resolve, 60));
+      const doc = new jsPDF('p', 'pt', [A4_WIDTH, A4_HEIGHT], true);
+      let exported = 0;
+      for (let i = 0; i < pages.length; i++) {
         const canvas = canvasRefs.current[i];
-        if (canvas) {
-          if (i > 0) doc.addPage();
-          let imgData;
-          if (scanEffect) {
-            imgData = processScanEffect(canvas);
-            doc.addImage(imgData, 'JPEG', -5, 0, A4_WIDTH + 10, A4_HEIGHT, undefined, 'FAST', 0.5);
-          } else {
-            imgData = canvas.toDataURL('image/jpeg', 0.8);
-            doc.addImage(imgData, 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT);
-          }
-        }
-      });
-      doc.save('assignment.pdf');
-      showToast("PDF Downloaded!", "success");
-    }, 100);
-  }, [pages, scanEffect, showToast]);
+        if (!canvas) continue;
+        if (exported > 0) doc.addPage();
+        const imgData = scanEffect ? processScanEffect(canvas) : canvas.toDataURL('image/jpeg', 0.82);
+        if (scanEffect) doc.addImage(imgData, 'JPEG', -5, 0, A4_WIDTH + 10, A4_HEIGHT, undefined, 'FAST', 0.5);
+        else doc.addImage(imgData, 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT, undefined, 'FAST');
+        exported++;
+        setExportProgress(Math.round(((i + 1) / pages.length) * 100));
+        if (i % 2 === 1) await new Promise(resolve => window.setTimeout(resolve, 0));
+      }
+      if (exported === 0) throw new Error('No rendered pages were available to export.');
+      doc.save('lazyscript-assignment.pdf');
+      showToast(`PDF exported (${exported} pages).`, 'success');
+    } catch (error) {
+      console.error('PDF export failed:', error);
+      showToast(error instanceof Error ? `PDF export failed: ${error.message}` : 'PDF export failed.', 'error');
+    } finally {
+      setIsProcessing(false);
+      window.setTimeout(() => setExportProgress(0), 800);
+    }
+  }, [pages, scanEffect, showToast, isProcessing]);
 
   // ==========================================================================
   // INITIALIZATION
@@ -1345,6 +1552,20 @@ const App: React.FC = () => {
         ))}
       </div>
 
+      {/* FORMULA MODAL */}
+      {isFormulaModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[210] flex items-center justify-center p-4" onClick={() => { selectedFormulaRef.current = null; setIsFormulaModalOpen(false); }}>
+          <div className={`rounded-xl p-6 max-w-xl w-full ${isDarkMode ? 'bg-slate-800 text-white' : 'bg-white text-slate-900'}`} onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-2">Insert mathematical formula</h3>
+            <p className="text-sm opacity-70 mb-3">Enter LaTeX. The editable source is saved with your LazyScript project.</p>
+            <textarea value={formulaLatex} onChange={e => setFormulaLatex(e.target.value)} rows={4} spellCheck={false} className="w-full rounded-lg border p-3 font-mono text-sm text-slate-900" placeholder="\frac{a}{b} = c" />
+            <label className="flex items-center gap-2 text-sm my-4"><input type="checkbox" checked={formulaDisplayMode} onChange={e => setFormulaDisplayMode(e.target.checked)} /> Display formula on its own centred line</label>
+            <div className="flex gap-2"><button onClick={() => { selectedFormulaRef.current = null; setIsFormulaModalOpen(false); }} className="flex-1 rounded-lg border py-2">Cancel</button><button onClick={insertFormula} className="flex-1 rounded-lg bg-blue-600 text-white py-2">Render & Insert</button></div>
+            <p className="text-xs opacity-60 mt-3">Requires an internet connection the first time MathJax is loaded.</p>
+          </div>
+        </div>
+      )}
+
       {/* IMAGE MODAL */}
       {isImageModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4" onClick={() => setIsImageModalOpen(false)}>
@@ -1366,6 +1587,7 @@ const App: React.FC = () => {
                 </button>
               ))}
             </div>
+            <div className="mb-4 flex items-center justify-between gap-3 text-sm"><span>Image fitting</span><select value={imageFit} onChange={e => setImageFit(e.target.value as 'contain' | 'cover')} className="rounded border p-2 text-slate-800"><option value="contain">Contain (no crop)</option><option value="cover">Cover (crop to fill)</option></select></div>
             <div className="flex gap-2">
               <button onClick={() => setIsImageModalOpen(false)} className={`flex-1 py-2 rounded-lg border ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-200 hover:bg-slate-50'}`}>Cancel</button>
               <button onClick={insertImageWithRatio} className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Insert</button>
@@ -1380,8 +1602,8 @@ const App: React.FC = () => {
           <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
             <span className="text-blue-600 text-2xl sm:text-3xl">✍</span>
             <span>LazyScript</span>
-            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v19.0</span>
-            {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
+            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v{APP_VERSION}</span>
+            {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Exporting {exportProgress}%</span>}
           </h1>
           <div className="flex gap-2">
             <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-full transition-colors bg-slate-100 hover:bg-slate-200 text-slate-600">
@@ -1399,7 +1621,7 @@ const App: React.FC = () => {
               <button onClick={saveProject} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
                 <Save size={16} /> <span className="hidden sm:inline">Save</span>
               </button>
-              <button onClick={downloadPDF} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2 rounded-lg shadow-md text-sm font-medium flex gap-2 items-center transition-transform hover:scale-105">
+              <button onClick={downloadPDF} disabled={isProcessing} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-wait text-white px-3 sm:px-5 py-2 rounded-lg shadow-md text-sm font-medium flex gap-2 items-center transition-transform hover:scale-105">
                 <Download size={16} /> <span className="hidden sm:inline">PDF</span>
               </button>
             </div>
@@ -1463,6 +1685,7 @@ const App: React.FC = () => {
                 </div>
                 <button onMouseDown={preventFocusLoss} onClick={deleteSelectedImage} className={`p-2 rounded border hover:bg-red-100 text-red-500 ${isDarkMode ? 'border-slate-600 hover:bg-red-900' : 'border-slate-200'} ${selectedImage ? 'ring-2 ring-red-400' : ''}`} title="Delete Selected Item"><Delete size={18} /></button>
                 <button onMouseDown={preventFocusLoss} onClick={openImageModal} className={`p-2 rounded border cursor-pointer hover:bg-opacity-10 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-white' : 'border-slate-200 text-slate-700 hover:bg-black'}`} title="Insert Image with Ratio"><ImageIcon size={18} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => { selectedFormulaRef.current = null; setFormulaLatex('\\frac{-b \pm \sqrt{b^2-4ac}}{2a}'); setFormulaDisplayMode(false); setIsFormulaModalOpen(true); }} className={`p-2 rounded border hover:bg-opacity-10 font-serif font-bold ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-white' : 'border-slate-200 text-slate-700 hover:bg-black'}`} title="Insert mathematical formula">∑</button>
                 <button onMouseDown={preventFocusLoss} onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Reset/New Page">
                   {clearConfirmStage === 0 ? <><RefreshCw size={16} /></> : clearConfirmStage === 1 ? "New Page?" : "Really??"}
                 </button>

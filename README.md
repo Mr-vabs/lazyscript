@@ -9,6 +9,24 @@
 ![Netlify](https://img.shields.io/badge/Netlify-Deployed-00C7B7)
 ![Status](https://img.shields.io/badge/Status-Private-red)
 
+
+## 🚀 LazyScript v21.0.0 — Formula & Image Layout Release
+
+### New in v21
+- **Mathematical formula editor:** insert inline or centred display equations using LaTeX and MathJax.
+- **Editable formula source:** click an inserted equation to reopen and edit its original LaTeX.
+- **Vector formula layout:** formulas are measured as dedicated layout segments for improved spacing and PDF clarity.
+- **Fixed image frames:** choose common aspect ratios and select Contain (no crop) or Cover (crop to fill).
+- **Project hardening:** validated project imports, legacy defaults, bounded drawing data, and safer save/load handling.
+- **PDF export feedback:** progress, empty-document checks and actionable error messages.
+
+### Compatibility and known limitations
+- Existing `.lazy` / JSON projects remain supported through settings normalization.
+- MathJax is loaded on demand from a CDN the first time a formula is inserted, so first use requires internet access.
+- Formula SVGs are rasterized with the existing high-resolution A4 canvas when the final PDF is generated; formulas remain editable in the source project.
+- The current editor and canvas pagination engine are retained. This is an incremental upgrade, not a full editor rewrite.
+- Build and browser QA still need to be run in an environment where npm dependencies can be installed. See `QA_CHECKLIST.md` before deployment.
+
 ## 🌟 Overview
 **LazyScript** is a custom tool built to convert digital text into realistic handwritten documents. It supports complex formatting like tables, images, and text alignment, rendering everything onto a canvas that simulates A4 paper.
 
@@ -76,7 +94,19 @@ public/
 
 ---
 
-## 🚀 Deployment (Netlify)
+## 🚀 Deployment (GitHub → Netlify)
+
+This repository includes `netlify.toml`; Netlify is configured to run `npm run build` and publish `dist` using Node.js `22.16.0`.
+
+1. Extract this ZIP and push the **contents** of `lazyscript-main/` to the root of your GitHub repository (not an extra nested folder).
+2. In Netlify, choose **Add new site → Import an existing project** and select the GitHub repository.
+3. Select the branch you want Netlify to deploy (for example, `main`).
+4. Confirm the build command is `npm run build` and the publish directory is `dist` (Netlify should read both from `netlify.toml`).
+5. Save and deploy. Future pushes to the connected branch will trigger deployments automatically.
+
+A GitHub Actions workflow is included to run dependency installation, linting, and the production build on pushes and pull requests. Wait for it to pass before promoting a deploy preview. See `BUILD_STATUS.md` and `QA_CHECKLIST.md`; this package has not yet received a successful build/browser QA certification in the environment where it was assembled.
+
+### Existing private-repository setup notes
 
 Since this is a private repo, connect your GitHub account to Netlify:
 
@@ -93,7 +123,7 @@ Since this is a private repo, connect your GitHub account to Netlify:
 
 ## 📜 Full Changelog
 
-### 🚀 Changelog v18.2 (Current)
+### 🚀 Changelog v18.2 (Historical baseline)
 
 #### 🔥 Critical Fixes & Logic
 - **Matrix Table Algorithm:** Replaced the simple table parser with a robust **2D Grid System**. This fixes alignment issues when using complex `rowSpan` and `colSpan` combinations.
