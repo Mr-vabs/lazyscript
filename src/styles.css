@@ -1,0 +1,35 @@
+:root{--desk:#dde2e8;--panel:#f7f8fa;--line:#c5ccd6;--text:#1b2230;--mute:#5d6878;--ink:#1f3fb8;--inkbg:#e6ebfb;--on-ink:#fff;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--desk:#14171c;--panel:#1d2128;--line:#343b46;--text:#e8ebf0;--mute:#9aa4b4;--ink:#8ea6ff;--inkbg:#26304f;--on-ink:#10152b;color-scheme:dark}}
+:root[data-theme="dark"]{--desk:#14171c;--panel:#1d2128;--line:#343b46;--text:#e8ebf0;--mute:#9aa4b4;--ink:#8ea6ff;--inkbg:#26304f;--on-ink:#10152b;color-scheme:dark}
+*{box-sizing:border-box}html,body,#root{height:100%;margin:0}
+#root{display:flex;flex-direction:column}
+body{background:var(--desk);color:var(--text);font:14px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font:700 24px "Caveat",cursive;margin:0 auto 0 0;color:var(--ink)}
+button,select,textarea{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer}
+button:hover{border-color:var(--ink)}:focus-visible{outline:2px solid var(--ink);outline-offset:1px}
+button.pri{background:var(--ink);border-color:var(--ink);color:var(--on-ink)}button.on{background:var(--inkbg);border-color:var(--ink)}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(320px,460px) 1fr}
+.ed{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line)}
+.bar{display:flex;flex-wrap:wrap;gap:6px;padding:10px;border-bottom:1px solid var(--line);align-items:center}
+.sw{width:24px;height:24px;border-radius:50%;padding:0;border:2px solid var(--panel)}
+#ed{flex:1;overflow:auto;padding:16px;outline:none;font-size:15px;line-height:1.6;min-height:120px}
+#ed pre{border-left:3px solid var(--ink);padding-left:10px;white-space:pre-wrap;margin:6px 0}
+#ed table{border-collapse:collapse;width:100%}#ed td,#ed th{border:1px solid var(--line);padding:4px 6px}
+#ed img{border:1px dashed var(--ink);border-radius:2px}
+.set{display:grid;grid-template-columns:1fr 1fr;gap:6px 14px;padding:10px;border-top:1px solid var(--line)}
+.set label{display:flex;flex-direction:column;font-size:12px;color:var(--mute);gap:2px}.set input{width:100%;accent-color:var(--ink)}
+.set .full{grid-column:1/-1;display:flex;gap:6px}.set .full>*{flex:1}
+.pv{overflow:auto;padding:22px 12px 40px;display:flex;flex-direction:column;align-items:center;gap:22px}
+.pg{width:min(100%,640px);aspect-ratio:595/842;background:#fffefa;box-shadow:0 2px 14px rgba(10,20,40,.25);position:relative;flex:none}
+.pg canvas{width:100%;height:100%;display:block}.pg i{position:absolute;left:4px;top:-16px;font-size:11px;color:var(--mute);font-style:normal}
+.tabs{display:none}
+.modal{position:fixed;inset:0;background:rgba(10,15,25,.55);display:grid;place-items:center;padding:16px;z-index:10}
+.dlg{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;width:min(440px,100%);display:flex;flex-direction:column;gap:10px;max-height:100%;overflow:auto}
+.dlg h2{margin:0;font-size:17px}.dlg textarea{width:100%;font-family:ui-monospace,Menlo,monospace;resize:vertical;cursor:text}
+.prev{background:#fffefa;border:1px solid var(--line);border-radius:6px;padding:6px;overflow:auto;min-height:60px}
+.row{display:flex;align-items:center;gap:8px}.row select{flex:1}.row.end{justify-content:flex-end}.hint{margin:0;color:var(--mute);font-size:12px}
+.frame{border:1px solid var(--line);background:#fff;overflow:hidden;margin:0 auto}.frame img{width:100%;height:100%;display:block}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--text);color:var(--desk);padding:8px 14px;border-radius:6px;opacity:0;transition:opacity .2s;pointer-events:none}#toast.s{opacity:1}
+@media (max-width:760px){main{grid-template-columns:1fr}.tabs{display:flex;gap:6px;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}.tabs button{flex:1}
+main.v-pv .ed{display:none}main:not(.v-pv) .pv{display:none}.ed{border-right:0}}

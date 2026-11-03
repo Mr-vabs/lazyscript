@@ -47,3 +47,13 @@ npm ci
 npm run build
 npm run lint
 ```
+
+
+## Handwritten mathematics (V21.1)
+- [ ] Insert `x^2 + y^2 = z^2`; confirm glyphs look handwritten, not textbook typeset.
+- [ ] Insert `\\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}`; confirm fraction bar and radical are aligned.
+- [ ] Insert inline and display formulas; confirm inline baseline and centred display placement.
+- [ ] Reopen a formula and confirm the original LaTeX is editable.
+- [ ] Save/import a `.lazy` project containing formulas; confirm source and rendering persist.
+- [ ] Export PDF and inspect formula sharpness, clipping, baseline and page breaks.
+- [ ] Test on mobile and with network disabled after the Caveat font has loaded once; confirm fallback remains readable.
