@@ -1,0 +1,13 @@
+export type SegmentType = 'text' | 'image' | 'table';
+export type PaperType = 'lined' | 'grid' | 'blank';
+export type AlignType = 'left' | 'center' | 'right';
+export type CellStyle = { text: string; color: string; isBold: boolean; isUnderline: boolean; align: AlignType; rowSpan: number; colSpan: number };
+export type TableRow = { cells: (CellStyle | null)[]; maxHeight?: number };
+export type TableData = { rows: TableRow[]; colWidths: number[]; totalWidth: number };
+export type TextSegment = { type: SegmentType; text?: string; color?: string; isBold?: boolean; isUnderline?: boolean; align?: AlignType; width?: number; offsetX?: number; src?: string; height?: number; imageRatio?: number; imgElement?: HTMLImageElement; tableData?: TableData; isCodeLine?: boolean; codeBorderColor?: string; imageFloat?: 'left' | 'right' | 'none'; tableFloat?: 'left' | 'right' | 'none' };
+export type PageData = { lines: TextSegment[][] };
+export type Point = { x: number; y: number };
+export type Stroke = { points: Point[]; color: string; width: number };
+export type DrawingData = { [pageIndex: number]: Stroke[] };
+export type ProjectFile = { version: string; htmlContent: string; drawings?: DrawingData; settings: { skew: number; lineOpacity: number; scanEffect: boolean; fontSize: number; paperType: PaperType; activeFontIndex: number; spacing: number; humanize: number; pressure?: number } };
+export type ToastType = { id: number; message: string; type: 'info' | 'error' | 'success' };

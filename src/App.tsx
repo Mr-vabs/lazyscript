@@ -1,146 +1,1547 @@
-import type React from 'react';
-import { useEffect, useRef, useState } from 'react';
-import { DEFAULTS, FONTS, RATIOS, IMG_WIDTHS, Settings } from './engine/config';
-import { ensureFont } from './engine/fonts';
-import { layout, Item } from './engine/layout';
-import { renderPage } from './engine/render';
-import { buildMath } from './engine/math';
-import { fileToDataUrl, imgEvents } from './engine/images';
-import { exportPdf } from './engine/pdf';
-import { clean, normalizeMath } from './lib/sanitize';
-import { loadDraft, saveDraft, downloadProject, readProject } from './lib/storage';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { FONT_OPTIONS } from './config/fonts';
+import { AI_SYSTEM_PROMPT } from './config/aiPrompt';
+import type { SegmentType, PaperType, AlignType, CellStyle, TableRow, TableData, TextSegment, PageData, Point, Stroke, DrawingData, ProjectFile, ToastType } from './types/document';
+import jsPDF from 'jspdf';
+import DOMPurify from 'dompurify';
+import {
+  Download, Bold, Underline, ScanLine, FileUp, Save, Image as ImageIcon,
+  Table as TableIcon, Grid3X3, AlignJustify, Moon, Sun, Type, Plus, Trash2,
+  Columns, Rows, ArrowRightFromLine, ArrowDownFromLine, Delete,
+  AlignLeft, AlignCenter, AlignRight, Type as FontIcon, ChevronDown,
+  ArrowUpNarrowWide, CaseUpper, CaseLower, CaseSensitive, Bot, FilePlus, X,
+  PenTool, Undo2, RefreshCw, ZoomIn, ZoomOut
+} from 'lucide-react';
 
-const SAMPLE = `<h3>Statistics – Assignment 1</h3><p>Q1. Find the sample mean and the standard deviation.</p><p>Ans. The sample mean is $\\bar{x}=\\frac{1}{n}\\sum_{i=1}^{n}x_i = 6$ and the standard deviation is</p><p>$$s=\\sqrt{\\frac{\\sum_{i=1}^{n}(x_i-\\bar{x})^2}{n-1}}$$</p><p>so $s \\approx 1.58$. Type formulas as LaTeX between dollar signs.</p>`;
-const AI_PROMPT = `You are writing an assignment for LazyScript, a handwriting-style document editor. Output ONLY raw HTML body content. Do not use Markdown, code fences, explanations outside the HTML, or a full HTML document.
+// ============================================================================
+// CONFIGURATION
+// ============================================================================
+const SCALE = 2;
+const A4_WIDTH = 595;
+const A4_HEIGHT = 842;
+const CANVAS_WIDTH = A4_WIDTH * SCALE;
+const CANVAS_HEIGHT = A4_HEIGHT * SCALE;
+const MARGIN_X = 35 * SCALE;
+const MARGIN_Y = 60 * SCALE;
 
-DOCUMENT STRUCTURE
-- Use semantic HTML such as <h2>, <h3>, <p>, <b>, <u>, <ul>, <ol>, <li>, <table>, <thead>, <tbody>, <tr>, <th>, <td> and <pre> where appropriate.
-- Put each question and answer in readable paragraphs. Make question labels bold; use black for questions and blue for answers when inline styling is useful.
-- Keep paragraphs concise and naturally spaced. Do not create layout with excessive <br> tags.
-
-MATHEMATICS — IMPORTANT
-- Write EVERY mathematical expression as LaTeX source in the HTML text. Do not render, attach, link, describe, or substitute formulas as images, screenshots, SVG, MathML, Unicode-art, or HTML drawings.
-- Inline mathematics MUST use one dollar delimiter on each side: $...$. Example: <p>The mean is $\bar{x}=\frac{1}{n}\sum_{i=1}^{n}x_i$.</p>
-- A standalone/display equation MUST be the only content in its own paragraph and use two dollar delimiters on each side: <p>$$s=\sqrt{\frac{\sum_{i=1}^{n}(x_i-\bar{x})^2}{n-1}}$$</p>.
-- Never put LaTeX inside <pre>, <code>, HTML attributes, or a code block. Do not HTML-escape the LaTeX backslashes or dollar delimiters.
-- Use braces for multi-character powers and indices: $x^{n+1}$, $a_{ij}$. Use \frac{numerator}{denominator} for fractions and \sqrt{expression} for roots.
-- Supported notation includes ordinary numbers/variables; superscripts and subscripts; nested fractions; square roots and indexed roots \sqrt[n]{x}; Greek letters such as \alpha, \beta, \theta, \lambda, \pi, \sigma; operators such as \times, \cdot, \pm, \leq, \geq, \neq, \approx, \rightarrow, \infty; functions such as \sin, \cos, \tan, \log, \ln; sums/products/integrals with limits such as \sum_{i=1}^{n}, \prod_{i=1}^{n}, \int_{a}^{b}; accents such as \bar{x}, \hat{x}, \vec{v}; grouping with \left( ... \right), \left[ ... \right]; and text inside formulas with \text{...}.
-- Keep to this supported subset. Do NOT use matrix/array/aligned/cases environments (\begin{...}), \binom, equation numbering, or advanced LaTeX packages; they are not supported by the current handwriting renderer. If a problem requires a matrix, present it as a simple HTML table instead. If a symbol cannot be expressed with the supported subset, explain it in ordinary text rather than inventing a broken LaTeX command.
-- Preserve the mathematical meaning, signs, parentheses, limits, units and exact values. Do not omit steps in derivations. Prefer one display equation per paragraph for reliable line layout.
-
-OTHER RULES
-- Inside <pre>, escape literal < as &lt; and > as &gt;. Do not use <style>, <script>, external resources, or <img> elements. Ordinary non-mathematical illustrations are not required.
-- Question: [PASTE HERE]`;
-
-function PageView({ page, idx, s }: { page: Item[]; idx: number; s: Settings }) {
-  const box = useRef<HTMLDivElement>(null), cv = useRef<HTMLCanvasElement>(null), [vis, setVis] = useState(false);
-  useEffect(() => { const io = new IntersectionObserver(e => setVis(e[0].isIntersecting), { rootMargin: '600px' }); io.observe(box.current!); return () => io.disconnect(); }, []);
-  useEffect(() => { if (vis && cv.current) renderPage(page, idx, cv.current, 1.6, s, false); }, [vis, page, s, idx]);
-  return <div ref={box} className="pg"><i>Page {idx + 1}</i><canvas ref={cv} /></div>;
+// ============================================================================
+// CONTENT TEMPLATES
+// ============================================================================
+const DEFAULT_CONTENT = `
+<h3>Welcome to LazyScript!</h3>
+<p>This tool converts typed text into realistic handwriting.<br/>
+<strong>How to use:</strong></p>
+<ul>
+<li>Type directly here or paste text.</li>
+<li>Use the toolbar for <b>Bold</b>, <u>Underline</u>, or Text Color.</li>
+<li>Click the <b>Robot Icon</b> to copy a prompt for AI.</li>
+</ul>
+<p><strong>Code Example:</strong></p>
+<pre style="white-space: pre-wrap; border-left: 3px solid #000; padding-left: 10px; color: #000f55;">
+#include &lt;stdio.h&gt;
+int main() {
+printf("Hello World");
+return 0;
 }
+</pre>
+<p><br></p>
+`;
 
-function MathDialog({ s, onInsert, onClose }: { s: Settings; onInsert: (t: string, d: boolean) => void; onClose: () => void }) {
-  const [tex, setTex] = useState('\\bar{x}=\\frac{1}{n}\\sum_{i=1}^{n}x_i'), [disp, setDisp] = useState(false), cv = useRef<HTMLCanvasElement>(null);
+// ============================================================================
+// IMAGE ASPECT RATIOS
+// ============================================================================
+const ASPECT_RATIOS = [
+  { label: '1:1 (Square)', ratio: 1, w: 200, h: 200 },
+  { label: '4:3 (Photo)', ratio: 1.33, w: 240, h: 180 },
+  { label: '3:4 (Portrait)', ratio: 0.75, w: 180, h: 240 },
+  { label: '16:9 (Wide)', ratio: 1.78, w: 280, h: 158 },
+  { label: '9:16 (Tall)', ratio: 0.56, w: 158, h: 280 },
+];
+
+// ============================================================================
+// MAIN APP COMPONENT
+// ============================================================================
+const App: React.FC = () => {
+  // ==========================================================================
+  // STATE
+  // ==========================================================================
+  const [pages, setPages] = useState<PageData[]>([]);
+  const [skewFactor, setSkewFactor] = useState(1.5);
+  const [spacingFactor, setSpacingFactor] = useState(0);
+  const [scanEffect, setScanEffect] = useState(false);
+  const [lineOpacity, setLineOpacity] = useState(0.4);
+  const [baseFontSize, setBaseFontSize] = useState(18);
+  const [paperType, setPaperType] = useState<PaperType>('lined');
+  const [activeFontIndex, setActiveFontIndex] = useState(0);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [mobilePanel, setMobilePanel] = useState<'write' | 'preview'>('write');
+  const [imageFloat, setImageFloat] = useState<'none' | 'left' | 'right'>('none');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<HTMLImageElement | null>(null);
+  const [isFontMenuOpen, setIsFontMenuOpen] = useState(false);
+  const [isCaseMenuOpen, setIsCaseMenuOpen] = useState(false);
+  const [clearConfirmStage, setClearConfirmStage] = useState(0);
+  const [toasts, setToasts] = useState<ToastType[]>([]);
+  const [isDrawingMode, setIsDrawingMode] = useState(false);
+  const [drawings, setDrawings] = useState<DrawingData>({});
+  const [currentStroke, setCurrentStroke] = useState<Stroke | null>(null);
+  const [inkColor, setInkColor] = useState('#000000');
+  const [humanizeFactor, setHumanizeFactor] = useState(3);
+  const [zoom, setZoom] = useState(0.4);
+  const [isImageModalOpen, setIsImageModalOpen] = useState(false);
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [selectedAspectRatio, setSelectedAspectRatio] = useState(ASPECT_RATIOS[1]);
+
+  // Refs
+  const editorRef = useRef<HTMLDivElement>(null);
+  const canvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const parseTimeoutRef = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const isInitializedRef = useRef(false);
+  const lastContentRef = useRef<string>('');
+  const lastSettingsRef = useRef({ fontSize: 18, spacing: 0, fontIndex: 0 });
+  const pagesLengthRef = useRef(0);
+
+  // Keep ref synced
   useEffect(() => {
-    const c = cv.current!, b = buildMath(tex, 28, s, disp), w = Math.ceil(b.w + 24), h = Math.ceil(b.a + b.d + 24);
-    c.width = w * 2; c.height = h * 2; c.style.width = w + 'px'; c.style.height = h + 'px';
-    const x = c.getContext('2d')!; x.scale(2, 2); x.fillStyle = '#fffefa'; x.fillRect(0, 0, w, h); x.fillStyle = s.ink; b.draw(x, 12, 12 + b.a, () => 0);
-  }, [tex, disp, s]);
-  return <div className="modal" onClick={onClose}><div className="dlg" onClick={e => e.stopPropagation()}>
-    <h2>Insert formula</h2>
-    <textarea value={tex} onChange={e => setTex(e.target.value)} rows={3} spellCheck={false} aria-label="LaTeX" />
-    <div className="prev"><canvas ref={cv} /></div>
-    <label className="row"><input type="checkbox" checked={disp} onChange={e => setDisp(e.target.checked)} /> Put on its own centred line</label>
-    <p className="hint">Supports fractions, roots, powers, subscripts, ∑ ∫ ∏ lim with limits, Greek letters, bars and hats, and \left( \right) brackets.</p>
-    <div className="row end"><button onClick={onClose}>Cancel</button><button className="pri" onClick={() => onInsert(tex, disp)}>Insert</button></div>
-  </div></div>;
-}
+    pagesLengthRef.current = pages.length;
+  }, [pages]);
 
-function ImageDialog({ src, onInsert, onClose }: { src: string; onInsert: (r: string, w: string, f: string) => void; onClose: () => void }) {
-  const [r, setR] = useState('4:3'), [w, setW] = useState('Medium'), [f, setF] = useState('cover');
-  return <div className="modal" onClick={onClose}><div className="dlg" onClick={e => e.stopPropagation()}>
-    <h2>Insert image</h2>
-    <p className="hint">The image goes into a fixed frame, so it always takes the same whole number of lines and never pushes the text off the ruling.</p>
-    <div className="frame" style={{ aspectRatio: String(RATIOS[r]), width: Math.min(IMG_WIDTHS[w], 300) }}><img src={src} style={{ objectFit: f as any }} alt="" /></div>
-    <label className="row">Shape <select value={r} onChange={e => setR(e.target.value)}>{Object.keys(RATIOS).map(k => <option key={k}>{k}</option>)}</select></label>
-    <label className="row">Width <select value={w} onChange={e => setW(e.target.value)}>{Object.keys(IMG_WIDTHS).map(k => <option key={k}>{k}</option>)}</select></label>
-    <label className="row">Fit <select value={f} onChange={e => setF(e.target.value)}><option value="cover">Fill frame (crop)</option><option value="contain">Show whole image</option></select></label>
-    <div className="row end"><button onClick={onClose}>Cancel</button><button className="pri" onClick={() => onInsert(r, w, f)}>Insert</button></div>
-  </div></div>;
-}
+  // Computed
+  const CURRENT_FONT_SIZE = baseFontSize * SCALE;
+  const CURRENT_LINE_HEIGHT = CURRENT_FONT_SIZE * 1.5;
+  const CURRENT_FONT = FONT_OPTIONS[activeFontIndex];
+  const AVAILABLE_WIDTH = CANVAS_WIDTH - (MARGIN_X * 2);
 
-export default function App() {
-  const ed = useRef<HTMLDivElement>(null), range = useRef<Range | null>(null), fileIn = useRef<HTMLInputElement>(null), imgIn = useRef<HTMLInputElement>(null);
-  const [s, setS] = useState<Settings>(() => loadDraft()?.s || DEFAULTS), [ver, setVer] = useState(0), [pages, setPages] = useState<Item[][]>([]);
-  const [tab, setTab] = useState<'write' | 'preview'>('write'), [toast, setToast] = useState(''), [math, setMath] = useState(false), [img, setImg] = useState<string | null>(null), [sure, setSure] = useState(false);
-  const bump = () => setVer(v => v + 1), say = (m: string) => { setToast(m); setTimeout(() => setToast(''), 1800); };
-  const set = <K extends keyof Settings>(k: K, v: Settings[K]) => setS(o => ({ ...o, [k]: v }));
+  // ==========================================================================
+  // TOAST SYSTEM
+  // ==========================================================================
+  const showToast = useCallback((message: string, type: 'info' | 'error' | 'success' = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+  }, []);
 
-  useEffect(() => { ed.current!.innerHTML = clean(loadDraft()?.html || SAMPLE); bump(); const f = () => bump(); imgEvents.addEventListener('load', f); return () => imgEvents.removeEventListener('load', f); }, []);
+  const removeToast = useCallback((id: number) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  // ==========================================================================
+  // EDITOR ACTIONS
+  // ==========================================================================
+  const copyAIPrompt = useCallback(() => {
+    navigator.clipboard.writeText(AI_SYSTEM_PROMPT);
+    showToast("AI Prompt copied!", "success");
+  }, [showToast]);
+
+  const pasteAIHtml = useCallback(async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text.includes('<') && text.includes('>')) {
+        if (editorRef.current) {
+          editorRef.current.focus();
+          document.execCommand('insertHTML', false, DOMPurify.sanitize(text));
+          triggerParse();
+          showToast("AI Code pasted!", "success");
+        }
+      } else {
+        showToast("Clipboard doesn't look like HTML code.", "error");
+      }
+    } catch {
+      showToast("Failed to read clipboard.", "error");
+    }
+  }, [showToast]);
+
+  const clearEditor = useCallback(() => {
+    if (clearConfirmStage === 0) {
+      setClearConfirmStage(1);
+      setTimeout(() => setClearConfirmStage(0), 4000);
+      return;
+    }
+    if (clearConfirmStage === 1) {
+      setClearConfirmStage(2);
+      setTimeout(() => setClearConfirmStage(0), 4000);
+      return;
+    }
+    if (clearConfirmStage === 2) {
+      if (editorRef.current) {
+        editorRef.current.innerHTML = "<p><br></p>";
+        triggerParse(true);
+      }
+      setDrawings({});
+      setClearConfirmStage(0);
+      showToast("New Page Created!", "info");
+    }
+  }, [clearConfirmStage]);
+
+  const applyFormat = useCallback((command: string, value?: string) => {
+    if (command === 'foreColor' && value) setInkColor(value);
+    document.execCommand(command, false, value);
+    editorRef.current?.focus();
+    triggerParse();
+  }, []);
+
+  const applyAlignment = useCallback((align: 'left' | 'center' | 'right') => {
+    const cell = getSelectedCell();
+    if (cell) {
+      cell.style.textAlign = align;
+    } else {
+      document.execCommand(align === 'left' ? 'justifyLeft' : align === 'center' ? 'justifyCenter' : 'justifyRight');
+    }
+    triggerParse();
+  }, []);
+
+  const changeCase = useCallback((type: 'upper' | 'lower' | 'title') => {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const content = range.toString();
+    let newText = content;
+    if (type === 'upper') newText = content.toUpperCase();
+    if (type === 'lower') newText = content.toLowerCase();
+    if (type === 'title') {
+      newText = content.toLowerCase().split(' ').map(word =>
+        word.charAt(0).toUpperCase() + word.slice(1)
+      ).join(' ');
+    }
+    document.execCommand('insertText', false, newText);
+    setIsCaseMenuOpen(false);
+    triggerParse();
+  }, []);
+
+  const preventFocusLoss = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+  }, []);
+
+  // ==========================================================================
+  // DRAWING LOGIC
+  // ==========================================================================
+  const getCanvasCoordinates = useCallback((e: React.PointerEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      x: (e.clientX - rect.left) * scaleX,
+      y: (e.clientY - rect.top) * scaleY
+    };
+  }, []);
+
+  const renderSmoothStroke = useCallback((ctx: CanvasRenderingContext2D, stroke: Stroke) => {
+    if (stroke.points.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke.color;
+    ctx.lineWidth = stroke.width;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+    for (let i = 1; i < stroke.points.length - 1; i++) {
+      const p1 = stroke.points[i];
+      const p2 = stroke.points[i + 1];
+      const midPoint = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+      ctx.quadraticCurveTo(p1.x, p1.y, midPoint.x, midPoint.y);
+    }
+    const last = stroke.points[stroke.points.length - 1];
+    ctx.lineTo(last.x, last.y);
+    ctx.stroke();
+  }, []);
+
+  const startDrawing = useCallback((pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingMode) return;
+    const canvas = canvasRefs.current[pageIndex];
+    if (!canvas) return;
+    canvas.setPointerCapture(e.pointerId);
+    const point = getCanvasCoordinates(e, canvas);
+    setCurrentStroke({ points: [point], color: inkColor, width: 2 * SCALE });
+  }, [isDrawingMode, inkColor, getCanvasCoordinates]);
+
+  const drawMove = useCallback((pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingMode || !currentStroke) return;
+    const canvas = canvasRefs.current[pageIndex];
+    if (!canvas) return;
+    const point = getCanvasCoordinates(e, canvas);
+    const newPoints = [...currentStroke.points, point];
+    const updatedStroke = { ...currentStroke, points: newPoints };
+    setCurrentStroke(updatedStroke);
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.beginPath();
+      ctx.strokeStyle = updatedStroke.color;
+      ctx.lineWidth = updatedStroke.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (newPoints.length > 2) {
+        const last = newPoints[newPoints.length - 2];
+        const secondLast = newPoints[newPoints.length - 3];
+        const mid1 = { x: (secondLast.x + last.x) / 2, y: (secondLast.y + last.y) / 2 };
+        const mid2 = { x: (last.x + point.x) / 2, y: (last.y + point.y) / 2 };
+        ctx.moveTo(mid1.x, mid1.y);
+        ctx.quadraticCurveTo(last.x, last.y, mid2.x, mid2.y);
+        ctx.stroke();
+      } else if (newPoints.length === 2) {
+        ctx.moveTo(newPoints[0].x, newPoints[0].y);
+        ctx.lineTo(newPoints[1].x, newPoints[1].y);
+        ctx.stroke();
+      }
+    }
+  }, [isDrawingMode, currentStroke, getCanvasCoordinates]);
+
+  const stopDrawing = useCallback((pageIndex: number, e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingMode || !currentStroke) return;
+    const canvas = canvasRefs.current[pageIndex];
+    if (canvas) canvas.releasePointerCapture(e.pointerId);
+    setDrawings(prev => {
+      const pageDrawings = prev[pageIndex] || [];
+      return { ...prev, [pageIndex]: [...pageDrawings, currentStroke] };
+    });
+    setCurrentStroke(null);
+  }, [isDrawingMode, currentStroke]);
+
+  const undoDrawing = useCallback(() => {
+    const pageIndices = Object.keys(drawings).map(Number).sort((a, b) => b - a);
+    if (pageIndices.length === 0) return;
+    const lastPage = pageIndices[0];
+    const pageDrawings = drawings[lastPage];
+    if (pageDrawings && pageDrawings.length > 0) {
+      const newDrawings = pageDrawings.slice(0, -1);
+      setDrawings({ ...drawings, [lastPage]: newDrawings });
+    }
+  }, [drawings]);
+
+  // ==========================================================================
+  // IMAGE MANAGEMENT
+  // ==========================================================================
+  const handleEditorClick = useCallback((e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'IMG') {
+      if (selectedImage) selectedImage.style.outline = 'none';
+      const img = target as HTMLImageElement;
+      img.style.outline = '3px solid #3b82f6';
+      setSelectedImage(img);
+    } else {
+      if (selectedImage) {
+        selectedImage.style.outline = 'none';
+        setSelectedImage(null);
+      }
+    }
+    if (!target.closest('.font-selector')) setIsFontMenuOpen(false);
+    if (!target.closest('.case-selector')) setIsCaseMenuOpen(false);
+  }, [selectedImage]);
+
+  const deleteSelectedImage = useCallback(() => {
+    if (selectedImage) {
+      selectedImage.remove();
+      setSelectedImage(null);
+      triggerParse();
+    } else {
+      document.execCommand('delete');
+    }
+  }, [selectedImage]);
+
+  const openImageModal = useCallback(() => {
+    imageInputRef.current?.click();
+  }, []);
+
+  const handleImageFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPendingImageFile(file);
+    setIsImageModalOpen(true);
+    e.target.value = '';
+  }, []);
+
+  const insertImageWithRatio = useCallback(() => {
+    if (!pendingImageFile) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const result = event.target?.result as string;
+      const img = document.createElement('img');
+      img.src = result;
+      img.setAttribute('data-ratio', String(selectedAspectRatio.ratio));
+      img.setAttribute('data-width', String(selectedAspectRatio.w));
+      img.setAttribute('data-height', String(selectedAspectRatio.h));
+      img.setAttribute('data-float', imageFloat);
+      img.setAttribute('data-wrap', imageFloat === 'none' ? 'false' : 'true');
+      img.style.maxWidth = `${selectedAspectRatio.w}px`;
+      img.style.display = imageFloat === 'none' ? 'block' : 'inline-block';
+      img.style.float = imageFloat === 'none' ? 'none' : imageFloat;
+      img.style.margin = imageFloat === 'none' ? '10px auto' : '6px 14px 8px 0';
+      if (editorRef.current) {
+        editorRef.current.focus();
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount > 0 && editorRef.current.contains(sel.anchorNode)) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(img);
+          range.collapse(false);
+        } else {
+          editorRef.current.appendChild(img);
+        }
+        editorRef.current.appendChild(document.createElement('br'));
+        triggerParse();
+      }
+      setIsImageModalOpen(false);
+      setPendingImageFile(null);
+      showToast("Image inserted!", "success");
+    };
+    reader.readAsDataURL(pendingImageFile);
+  }, [pendingImageFile, selectedAspectRatio, imageFloat, showToast]);
+
+  // ==========================================================================
+  // TABLE LOGIC
+  // ==========================================================================
+  const getSelectedCell = useCallback((): HTMLTableCellElement | null => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    let node = sel.anchorNode;
+    while (node && node !== editorRef.current) {
+      if (node.nodeName === 'TD' || node.nodeName === 'TH') {
+        return node as HTMLTableCellElement;
+      }
+      node = node.parentNode;
+    }
+    return null;
+  }, []);
+
+  const modifyTable = useCallback((action: string) => {
+    const cell = getSelectedCell();
+    if (!cell) {
+      showToast("Click inside a table cell first!", "error");
+      return;
+    }
+    const row = cell.parentElement as HTMLTableRowElement;
+    const table = row.parentElement?.parentElement as HTMLTableElement;
+    if (!table) return;
+
+    if (action === 'addRow') {
+      const newRow = table.insertRow(row.rowIndex + 1);
+      for (let i = 0; i < row.cells.length; i++) {
+        const newCell = newRow.insertCell();
+        newCell.style.border = "1px solid #000";
+        newCell.style.padding = "5px";
+        newCell.innerHTML = "New";
+      }
+    } else if (action === 'delRow') {
+      table.deleteRow(row.rowIndex);
+      if (table.rows.length === 0) table.remove();
+    } else if (action === 'addCol') {
+      for (let r = 0; r < table.rows.length; r++) {
+        const tr = table.rows[r];
+        const newCell = tr.insertCell();
+        newCell.style.border = "1px solid #000";
+        newCell.style.padding = "5px";
+        newCell.innerHTML = "New";
+      }
+    } else if (action === 'delCol') {
+      const cellIndex = cell.cellIndex;
+      for (let r = 0; r < table.rows.length; r++) {
+        const tr = table.rows[r];
+        if (tr.cells.length > cellIndex) tr.deleteCell(cellIndex);
+      }
+      if (table.rows.length > 0 && table.rows[0].cells.length === 0) table.remove();
+    } else if (action === 'mergeRight') {
+      const nextCell = cell.nextElementSibling as HTMLTableCellElement;
+      if (nextCell) {
+        cell.colSpan = (cell.colSpan || 1) + (nextCell.colSpan || 1);
+        cell.innerHTML += " " + nextCell.innerHTML;
+        nextCell.remove();
+      }
+    } else if (action === 'mergeDown') {
+      const nextRow = row.nextElementSibling as HTMLTableRowElement;
+      if (nextRow) {
+        const cellBelow = nextRow.cells[cell.cellIndex];
+        if (cellBelow) {
+          cell.rowSpan = (cell.rowSpan || 1) + (cellBelow.rowSpan || 1);
+          cell.innerHTML += "<br/>" + cellBelow.innerHTML;
+          cellBelow.remove();
+        }
+      }
+    }
+    triggerParse();
+  }, [showToast]);
+
+  const setTableFloat = useCallback((side: 'none' | 'left' | 'right') => {
+    const cell = getSelectedCell();
+    const table = cell?.closest('table') as HTMLTableElement | null;
+    if (!table) { showToast('Select a table cell first.', 'error'); return; }
+    table.style.float = side === 'none' ? 'none' : side;
+    table.style.margin = side === 'none' ? '10px 0' : '6px 14px 8px 0';
+    triggerParse(true);
+  }, [getSelectedCell, showToast, triggerParse]);
+
+  const insertTable = useCallback(() => {
+    const tableHTML = `
+<table style="border-collapse: collapse; width: 100%; margin: 10px 0; border: 1px solid #000;">
+<tbody>
+<tr><td style="border: 1px solid #000; padding: 5px;">Head 1</td><td style="border: 1px solid #000; padding: 5px;">Head 2</td></tr>
+<tr><td style="border: 1px solid #000; padding: 5px;">Cell 1</td><td style="border: 1px solid #000; padding: 5px;">Cell 2</td></tr>
+</tbody>
+</table><p><br></p>`;
+    document.execCommand('insertHTML', false, tableHTML);
+    triggerParse();
+  }, []);
+
+  // ==========================================================================
+  // PARSER
+  // ==========================================================================
+  const parseContentToPages = useCallback((root: HTMLElement) => {
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    const segments: TextSegment[] = [];
+
+    const measureTextWithSpacing = (text: string, font: string, spacing: number) => {
+      ctx.font = font;
+      let width = 0;
+      for (const char of text) {
+        width += ctx.measureText(char).width + (spacing * SCALE);
+      }
+      return width;
+    };
+
+    const processTable = (tableEl: HTMLElement): TextSegment | null => {
+      const rows = Array.from(tableEl.querySelectorAll('tr'));
+      if (rows.length === 0) return null;
+
+      let maxCols = 0;
+      rows.forEach(tr => {
+        const cells = Array.from(tr.querySelectorAll('td, th'));
+        let colsInRow = 0;
+        cells.forEach(c => colsInRow += (c as HTMLTableCellElement).colSpan || 1);
+        if (colsInRow > maxCols) maxCols = colsInRow;
+      });
+
+      const grid: (HTMLTableCellElement | null)[][] = Array(rows.length).fill(null).map(() => Array(maxCols).fill(null));
+      const cellOrigins = new Map<HTMLTableCellElement, { r: number; c: number }>();
+
+      rows.forEach((tr, r) => {
+        const cells = Array.from(tr.querySelectorAll('td, th'));
+        let c = 0;
+        cells.forEach((cell) => {
+          const el = cell as HTMLTableCellElement;
+          while (c < maxCols && grid[r][c] !== null) c++;
+          if (c >= maxCols) return;
+          const rs = el.rowSpan || 1;
+          const cs = el.colSpan || 1;
+          for (let i = 0; i < rs; i++) {
+            for (let j = 0; j < cs; j++) {
+              if (r + i < rows.length && c + j < maxCols) {
+                grid[r + i][c + j] = el;
+              }
+            }
+          }
+          cellOrigins.set(el, { r, c });
+          c += cs;
+        });
+      });
+
+      const colWidthsRaw = new Array(maxCols).fill(0);
+      const colMinWidths = new Array(maxCols).fill(36 * SCALE);
+      cellOrigins.forEach((pos, el) => {
+        const text = el.innerText.trim();
+        const font = `normal ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+        const preferred = measureTextWithSpacing(text, font, spacingFactor) + (20 * SCALE);
+        const longestWord = Math.max(0, ...text.split(/\s+/).map(word => measureTextWithSpacing(word, font, spacingFactor))) + (20 * SCALE);
+        const span = el.colSpan || 1;
+        const preferredPerCol = preferred / span;
+        const minPerCol = longestWord / span;
+        for (let k = 0; k < span; k++) {
+          colWidthsRaw[pos.c + k] = Math.max(colWidthsRaw[pos.c + k], preferredPerCol);
+          colMinWidths[pos.c + k] = Math.max(colMinWidths[pos.c + k], minPerCol);
+        }
+      });
+
+      const MAX_TABLE_WIDTH = CANVAS_WIDTH - (MARGIN_X * 2);
+      const totalPreferred = colWidthsRaw.reduce((a, b) => a + b, 0);
+      const totalMinimum = colMinWidths.reduce((a, b) => a + b, 0);
+      const finalColWidths = [...colWidthsRaw];
+      if (totalPreferred > MAX_TABLE_WIDTH) {
+        const targetMin = Math.min(totalMinimum, MAX_TABLE_WIDTH);
+        const remaining = Math.max(0, MAX_TABLE_WIDTH - targetMin);
+        const preferredExtra = colWidthsRaw.reduce((sum, w, i) => sum + Math.max(0, w - colMinWidths[i]), 0) || 1;
+        for (let i = 0; i < finalColWidths.length; i++) {
+          const minShare = totalMinimum > MAX_TABLE_WIDTH ? MAX_TABLE_WIDTH / maxCols : colMinWidths[i];
+          const extraShare = Math.max(0, colWidthsRaw[i] - colMinWidths[i]) / preferredExtra;
+          finalColWidths[i] = minShare + remaining * extraShare;
+        }
+      }
+
+      const tableRows: TableRow[] = [];
+      for (let r = 0; r < rows.length; r++) {
+        const rowData: (CellStyle | null)[] = [];
+        let maxRowHeight = CURRENT_LINE_HEIGHT * 1.2;
+
+        for (let c = 0; c < maxCols; c++) {
+          const el = grid[r][c];
+          const origin = el ? cellOrigins.get(el) : null;
+
+          if (el && origin && origin.r === r && origin.c === c) {
+            const text = el.innerText.trim();
+            let cellWidth = finalColWidths[c];
+            for (let k = 1; k < (el.colSpan || 1); k++) {
+              cellWidth += finalColWidths[c + k] || 0;
+            }
+
+            ctx.font = `normal ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+            const words = text.split(' ');
+            let lineWidth = 0;
+            let linesNeeded = 1;
+
+            for (const word of words) {
+              const wordWidth = measureTextWithSpacing(word + ' ', ctx.font, spacingFactor);
+              if (lineWidth + wordWidth > cellWidth - (20 * SCALE) && lineWidth > 0) {
+                linesNeeded++;
+                lineWidth = wordWidth;
+              } else {
+                lineWidth += wordWidth;
+              }
+            }
+
+            const cellHeight = Math.max(CURRENT_LINE_HEIGHT * 1.2, linesNeeded * CURRENT_LINE_HEIGHT);
+            if (cellHeight > maxRowHeight) {
+              maxRowHeight = cellHeight;
+            }
+
+            rowData.push({
+              text: text,
+              color: '#000000',
+              isBold: el.tagName === 'TH',
+              isUnderline: false,
+              align: 'left',
+              rowSpan: el.rowSpan || 1,
+              colSpan: el.colSpan || 1
+            });
+          } else {
+            rowData.push(null);
+          }
+        }
+
+        if (r > 0) {
+          for (let prevR = 0; prevR < r; prevR++) {
+            for (let c = 0; c < maxCols; c++) {
+              const prevCell = tableRows[prevR].cells[c];
+              if (prevCell && prevCell.rowSpan > 1 && prevR + prevCell.rowSpan > r) {
+                maxRowHeight = Math.max(maxRowHeight, CURRENT_LINE_HEIGHT * 1.2 * prevCell.rowSpan);
+              }
+            }
+          }
+        }
+
+        tableRows.push({ cells: rowData, maxHeight: maxRowHeight });
+      }
+
+      return {
+        type: 'table',
+        tableFloat: ((tableEl.style.float as 'left' | 'right') || 'none'),
+        tableData: {
+          rows: tableRows,
+          colWidths: finalColWidths,
+          totalWidth: finalColWidths.reduce((a, b) => a + b, 0)
+        }
+      };
+    };
+
+    // Modified traverse signature to pass the dynamic border color context down the tree
+    const traverse = (node: Node, style: { color: string; isBold: boolean; isUnderline: boolean }, listContext: { type: string; index: number; isCodeBlock?: boolean; borderColor?: string } | null) => {
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        const tagName = el.tagName;
+
+        if (tagName === 'TABLE') {
+          const tableSeg = processTable(el);
+          if (tableSeg) segments.push(tableSeg);
+          return;
+        }
+        if (tagName === 'IMG') {
+          const imgEl = el as HTMLImageElement;
+          const width = parseInt(imgEl.getAttribute('data-width') || '200');
+          const height = parseInt(imgEl.getAttribute('data-height') || '150');
+          const ratio = parseFloat(imgEl.getAttribute('data-ratio') || '1.33');
+          segments.push({
+            type: 'image',
+            src: imgEl.src,
+            width: width * SCALE,
+            height: height * SCALE,
+            imageRatio: ratio,
+            imageFloat: (imgEl.getAttribute('data-float') as 'left' | 'right' | 'none') || 'none',
+            imgElement: imgEl
+          });
+          return;
+        }
+        if (tagName === 'BR' && !node.nextSibling && !node.previousSibling) return;
+
+        const isBlock = ['DIV', 'P', 'BR', 'LI', 'H1', 'H2', 'TR', 'PRE'].includes(tagName);
+        let newListContext = listContext;
+        if (tagName === 'UL') newListContext = { type: 'ul', index: 0 };
+        if (tagName === 'OL') newListContext = { type: 'ol', index: 1 };
+        
+        // Dynamically capture the border color from the <pre> inline styles
+        if (tagName === 'PRE') {
+          const borderColor = el.style.borderLeftColor || el.style.borderColor || '#000';
+          newListContext = { type: 'pre', index: 0, isCodeBlock: true, borderColor };
+        }
+
+        let newColor = el.style.color || el.getAttribute('color') || style.color;
+        
+        const fontWeight = el.style.fontWeight;
+        const isStyleBold = fontWeight === 'bold' || fontWeight === '700' || fontWeight === '800' || parseInt(fontWeight) > 600;
+        const newBold = (tagName === 'B' || tagName === 'STRONG' || tagName === 'TH' || isStyleBold) || style.isBold;
+        
+        const newUnderline = (tagName === 'U' || el.style.textDecoration === 'underline') || style.isUnderline;
+
+        if (tagName === 'LI' && listContext) {
+          const bullet = listContext.type === 'ul' ? "• " : `${listContext.index}. `;
+          segments.push({ type: 'text', text: bullet, color: newColor, isBold: true });
+          if (listContext.type === 'ol') listContext.index++;
+        }
+
+        const rawAlign = (el.style.textAlign || el.getAttribute('align') || '').toLowerCase();
+        let align: AlignType = 'left';
+        if (rawAlign === 'center') align = 'center';
+        if (rawAlign === 'right') align = 'right';
+
+        node.childNodes.forEach(child => {
+          if (child.nodeType === Node.TEXT_NODE) {
+            const text = child.textContent || "";
+            if (text) {
+              if (newListContext?.isCodeBlock) {
+                const lines = text.split('\n');
+                lines.forEach((line, i) => {
+                  if (line !== '') {
+                    // Pass the captured codeBorderColor to each segment
+                    segments.push({ type: 'text', text: line, color: newColor, isBold: newBold, isUnderline: newUnderline, isCodeLine: true, codeBorderColor: newListContext?.borderColor });
+                  } else if (line === '' && lines.length > 1 && i !== 0) { 
+                    segments.push({ type: 'text', text: ' ', color: newColor, isCodeLine: true, codeBorderColor: newListContext?.borderColor });
+                  }
+                  
+                  if (i < lines.length - 1 && !(i === 0 && line === '')) {
+                    segments.push({ type: 'text', text: '\n', isCodeLine: true, codeBorderColor: newListContext?.borderColor });
+                  }
+                });
+              } else {
+                segments.push({ type: 'text', text, color: newColor, isBold: newBold, isUnderline: newUnderline, align });
+              }
+            }
+          } else {
+            traverse(child, { color: newColor, isBold: newBold, isUnderline: newUnderline }, newListContext);
+          }
+        });
+
+        if (isBlock && tagName !== 'BR') {
+          const lastSeg = segments[segments.length - 1];
+          if (lastSeg && lastSeg.text !== '\n') segments.push({ type: 'text', text: '\n' });
+        }
+        if (tagName === 'BR') {
+          segments.push({ type: 'text', text: '\n', isCodeLine: listContext?.isCodeBlock, codeBorderColor: listContext?.borderColor });
+        }
+      } else if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent || "";
+        if (text) segments.push({ type: 'text', text, color: style.color, isBold: style.isBold, isUnderline: style.isUnderline });
+      }
+    };
+
+    traverse(root, { color: '#000000', isBold: false, isUnderline: false }, null);
+
+    const finalPages: PageData[] = [];
+    let currentLines: TextSegment[][] = [];
+    let currentLine: TextSegment[] = [];
+    let currentY = MARGIN_Y;
+    let currentX = MARGIN_X;
+    let floatingImage: { side: 'left' | 'right'; width: number; bottom: number } | null = null;
+
+    const checkPageBreak = (neededHeight: number) => {
+      if (currentY + neededHeight > CANVAS_HEIGHT - MARGIN_Y) {
+        finalPages.push({ lines: currentLines });
+        currentLines = [];
+        currentY = MARGIN_Y;
+        return true;
+      }
+      return false;
+    };
+
+    const flushLine = (isEmptyLine = false) => {
+      if (currentLine.length === 0 && !isEmptyLine) return;
+      let maxH = CURRENT_LINE_HEIGHT;
+      currentLine.forEach(s => {
+        if (s.type === 'image' && s.height) maxH = Math.max(maxH, s.height + 20);
+        if (s.type === 'table' && s.tableData) maxH = Math.max(maxH, s.tableData.rows.length * CURRENT_LINE_HEIGHT * 1.5);
+      });
+      checkPageBreak(maxH);
+      if (currentLine.length > 0 || isEmptyLine) {
+        currentLines.push(currentLine);
+      }
+      currentLine = [];
+      currentY += maxH;
+      if (floatingImage && currentY >= floatingImage.bottom) floatingImage = null;
+      currentX = floatingImage?.side === 'left' ? MARGIN_X + floatingImage.width + 14 * SCALE : MARGIN_X;
+    };
+
+    segments.forEach(seg => {
+      if (seg.text === '\n') {
+        flushLine(true);
+        return;
+      }
+      if (seg.type === 'table' || seg.type === 'image') {
+        if (currentLine.length > 0) flushLine();
+        let height = 0;
+        if (seg.type === 'table') height = (seg.tableData!.rows.length * (CURRENT_LINE_HEIGHT * 1.2)) + 20;
+        else if (seg.type === 'image') height = seg.height! + 20;
+        checkPageBreak(height);
+        currentLines.push([seg]);
+        const floatSide = seg.type === 'image' ? seg.imageFloat : seg.tableFloat;
+        const floatWidth = seg.type === 'image' ? (seg.width || 200 * SCALE) : (seg.tableData?.totalWidth || 240 * SCALE);
+        if (floatSide && floatSide !== 'none') {
+          floatingImage = { side: floatSide, width: floatWidth, bottom: currentY + height };
+          currentY += CURRENT_LINE_HEIGHT;
+          currentX = floatSide === 'left' ? MARGIN_X + floatingImage.width + 14 * SCALE : MARGIN_X;
+          return;
+        }
+        currentY += height;
+        currentX = MARGIN_X;
+        return;
+      }
+      if (seg.type === 'text') {
+        const words = seg.text!.split(/(\s+)/);
+        words.forEach(word => {
+          if (word === "") return;
+          const effectiveFont = seg.isCodeLine
+            ? `normal ${CURRENT_FONT_SIZE}px monospace`
+            : `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+          ctx.font = effectiveFont;
+          const wordWidth = measureTextWithSpacing(word, ctx.font, spacingFactor);
+          const lineRight = floatingImage && currentY < floatingImage.bottom && floatingImage.side === 'right' ? CANVAS_WIDTH - MARGIN_X - floatingImage.width - 14 * SCALE : CANVAS_WIDTH - MARGIN_X;
+          if (currentX + wordWidth > lineRight) {
+            flushLine();
+          }
+          currentLine.push({ ...seg, text: word, width: wordWidth, offsetX: floatingImage && currentY < floatingImage.bottom && floatingImage.side === 'left' ? floatingImage.width + 14 * SCALE : 0 });
+          currentX += wordWidth;
+        });
+      }
+    });
+
+    if (currentLine.length > 0) flushLine();
+    if (currentLines.length > 0) finalPages.push({ lines: currentLines });
+    setPages(finalPages);
+  }, [CURRENT_FONT_SIZE, CURRENT_FONT, CURRENT_LINE_HEIGHT, AVAILABLE_WIDTH, spacingFactor]);
+
+  const triggerParse = useCallback((force = false) => {
+    if (!editorRef.current) return;
+
+    const currentContent = editorRef.current.innerHTML;
+    if (!force && currentContent === lastContentRef.current && pagesLengthRef.current > 0) {
+      return;
+    }
+    lastContentRef.current = currentContent;
+
+    setIsProcessing(true);
+    if (parseTimeoutRef.current) window.clearTimeout(parseTimeoutRef.current);
+    parseTimeoutRef.current = window.setTimeout(() => {
+      parseContentToPages(editorRef.current!);
+      setIsProcessing(false);
+      parseTimeoutRef.current = null;
+    }, 150);
+  }, [parseContentToPages]);
+
+  // Observer reference to prevent loop disconnects
+  const triggerParseRef = useRef(triggerParse);
   useEffect(() => {
-    let dead = false;
-    const t = setTimeout(async () => { await ensureFont(s); if (dead || !ed.current) return; setPages(layout(ed.current, s)); saveDraft(s, ed.current.innerHTML); }, 150);
-    return () => { dead = true; clearTimeout(t); };
-  }, [s, ver]);
-  useEffect(() => { const f = () => { const r = getSelection(); if (r && r.rangeCount && ed.current?.contains(r.anchorNode)) range.current = r.getRangeAt(0).cloneRange(); }; document.addEventListener('selectionchange', f); return () => document.removeEventListener('selectionchange', f); }, []);
+    triggerParseRef.current = triggerParse;
+  }, [triggerParse]);
 
-  const restore = () => { ed.current!.focus(); if (range.current) { const r = getSelection()!; r.removeAllRanges(); r.addRange(range.current); } };
-  const cmd = (c: string, v?: string) => { restore(); document.execCommand(c, false, v); bump(); };
-  const keep = (e: React.MouseEvent) => e.preventDefault();
-  const onPaste = (e: React.ClipboardEvent) => {
-    e.preventDefault(); const h = e.clipboardData.getData('text/html');
-    if (h) document.execCommand('insertHTML', false, clean(normalizeMath(h))); else document.execCommand('insertText', false, e.clipboardData.getData('text/plain')); bump();
-  };
-  const pasteAI = async () => { try { const t = await navigator.clipboard.readText(); restore(); document.execCommand('insertHTML', false, clean(normalizeMath(t))); bump(); say('Pasted'); } catch { say('Clipboard access was blocked'); } };
-  const copyPrompt = async () => { try { await navigator.clipboard.writeText(AI_PROMPT); say('AI prompt copied'); } catch { say('Copy was blocked by the browser'); } };
-  const insertMath = (t: string, d: boolean) => { setMath(false); restore(); document.execCommand('insertText', false, d ? `$$${t}$$` : `$${t}$`); bump(); };
-  const pickImage = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; try { setImg(await fileToDataUrl(f)); } catch (x: any) { say(x.message); } };
-  const insertImage = (r: string, w: string, f: string) => {
-    const src = img!; setImg(null); restore();
-    document.execCommand('insertHTML', false, `<img src="${src}" data-ratio="${RATIOS[r]}" data-w="${IMG_WIDTHS[w]}" data-fit="${f}" style="width:${Math.min(IMG_WIDTHS[w], 360)}px;max-width:100%;aspect-ratio:${RATIOS[r]};object-fit:${f};display:block"><p><br></p>`); bump();
-  };
-  const table = () => { restore(); document.execCommand('insertHTML', false, '<table><tr><th>Head 1</th><th>Head 2</th></tr><tr><td>Cell</td><td>Cell</td></tr></table><p><br></p>'); bump(); };
-  const clear = () => { if (!sure) { setSure(true); setTimeout(() => setSure(false), 3000); return; } setSure(false); ed.current!.innerHTML = '<p><br></p>'; bump(); say('Cleared'); };
-  const openProject = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; try { const p = await readProject(f); setS(p.s); ed.current!.innerHTML = clean(p.html); bump(); say('Project loaded'); } catch (x: any) { say(x.message); } };
-  const theme = () => { const r = document.documentElement, dark = r.dataset.theme === 'dark' || (!r.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches); r.dataset.theme = dark ? 'light' : 'dark'; };
-  const pdf = async () => { say('Building PDF…'); await ensureFont(s); await exportPdf(layout(ed.current!, s), s); say('PDF saved'); };
+  // ==========================================================================
+  // TRIGGER REPARSE ON FONT/SPACING CHANGES
+  // ==========================================================================
+  useEffect(() => {
+    const settingsChanged = (
+      lastSettingsRef.current.fontSize !== baseFontSize ||
+      lastSettingsRef.current.spacing !== spacingFactor ||
+      lastSettingsRef.current.fontIndex !== activeFontIndex
+    );
 
-  return <>
-    <header>
-      <h1>LazyScript</h1>
-      <button onClick={() => fileIn.current!.click()}>Open</button>
-      <button onClick={() => downloadProject(s, ed.current!.innerHTML)}>Save</button>
-      <button onClick={theme} aria-label="Toggle dark mode">Theme</button>
-      <button className="pri" onClick={pdf}>Download PDF</button>
-      <input ref={fileIn} type="file" accept=".lazy,.json" hidden onChange={openProject} />
-      <input ref={imgIn} type="file" accept="image/*" hidden onChange={pickImage} />
-    </header>
-    <div className="tabs"><button className={tab === 'write' ? 'on' : ''} onClick={() => setTab('write')}>Write</button><button className={tab === 'preview' ? 'on' : ''} onClick={() => setTab('preview')}>Preview</button></div>
-    <main className={tab === 'preview' ? 'v-pv' : ''}>
-      <section className="ed">
-        <div className="bar">
-          {['#14213d', '#1f3fb8', '#b3261e', '#1b6b3a'].map(c => <button key={c} className="sw" style={{ background: c }} aria-label={'Ink ' + c} onMouseDown={keep} onClick={() => { set('ink', c); cmd('foreColor', c); }} />)}
-          <button onMouseDown={keep} onClick={() => cmd('bold')}><b>B</b></button><button onMouseDown={keep} onClick={() => cmd('underline')}><u>U</u></button>
-          <button onMouseDown={keep} onClick={() => setMath(true)}>∑ Formula</button><button onMouseDown={keep} onClick={() => imgIn.current!.click()}>Image</button>
-          <button onMouseDown={keep} onClick={table}>Table</button><button onClick={copyPrompt}>Copy AI prompt</button><button onClick={pasteAI}>Paste AI HTML</button><button onClick={clear}>{sure ? 'Click again to clear' : 'New page'}</button>
-        </div>
-        <div id="ed" ref={ed} contentEditable suppressContentEditableWarning spellCheck onInput={bump} onPaste={onPaste} aria-label="Your text" />
-        <div className="set">
-          <label>Messiness <input type="range" min="0" max="3" step=".25" value={s.mess} onChange={e => set('mess', +e.target.value)} /></label>
-          <label>Font size <input type="range" min="12" max="26" step="1" value={s.size} onChange={e => set('size', +e.target.value)} /></label>
-          <label>Letter spacing <input type="range" min="-1" max="4" step=".25" value={s.sp} onChange={e => set('sp', +e.target.value)} /></label>
-          <label>Ruling opacity <input type="range" min="0" max="1" step=".1" value={s.op} onChange={e => set('op', +e.target.value)} /></label>
-          <div className="full">
-            <select value={s.fi} onChange={e => set('fi', +e.target.value)} aria-label="Handwriting font">{FONTS.map((f, i) => <option key={f.label} value={i}>{f.label}</option>)}</select>
-            <select value={s.paper} onChange={e => set('paper', e.target.value as any)} aria-label="Paper"><option value="lined">Lined</option><option value="grid">Grid</option><option value="blank">Blank</option></select>
-            <button className={s.scan ? 'on' : ''} onClick={() => set('scan', !s.scan)}>Scanner look</button>
+    if (settingsChanged && pagesLengthRef.current > 0) {
+      lastSettingsRef.current = { fontSize: baseFontSize, spacing: spacingFactor, fontIndex: activeFontIndex };
+      triggerParse(true);
+    }
+  }, [baseFontSize, spacingFactor, activeFontIndex, triggerParse]);
+
+  // ==========================================================================
+  // RENDERER
+  // ==========================================================================
+  useEffect(() => {
+    pages.forEach((pageData, index) => {
+      const canvas = canvasRefs.current[index];
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const mulberry32 = (seed: number) => {
+        return () => {
+          let t = (seed += 0x6D2B79F5);
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      };
+
+      const rng = mulberry32(index + baseFontSize + Math.floor(skewFactor * 100) + humanizeFactor * 1000);
+
+      ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      ctx.fillStyle = scanEffect ? "#f4f4f4" : "#fffdf0";
+      ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+      if (lineOpacity > 0) {
+        ctx.strokeStyle = `rgba(100, 149, 237, ${lineOpacity})`;
+        ctx.lineWidth = 1 * SCALE;
+        if (paperType === 'grid') {
+          ctx.lineWidth = 0.5 * SCALE;
+          const gridSize = 25 * SCALE;
+          for (let x = MARGIN_X; x < CANVAS_WIDTH; x += gridSize) {
+            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, CANVAS_HEIGHT); ctx.stroke();
+          }
+          for (let y = 0; y < CANVAS_HEIGHT; y += gridSize) {
+            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(CANVAS_WIDTH, y); ctx.stroke();
+          }
+        } else if (paperType === 'lined') {
+          for (let y = MARGIN_Y; y < CANVAS_HEIGHT; y += CURRENT_LINE_HEIGHT) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.bezierCurveTo(CANVAS_WIDTH / 2, y + (scanEffect ? 2 : 0), CANVAS_WIDTH, y, CANVAS_WIDTH, y);
+            ctx.stroke();
+          }
+          ctx.strokeStyle = `rgba(255, 100, 100, ${lineOpacity})`;
+          ctx.beginPath();
+          ctx.moveTo(MARGIN_X - (15 * SCALE), 0);
+          ctx.lineTo(MARGIN_X - (15 * SCALE), CANVAS_HEIGHT);
+          ctx.stroke();
+        }
+      }
+
+      let cursorY = MARGIN_Y;
+
+      pageData.lines.forEach(line => {
+        let cursorX = MARGIN_X + (line.find(seg => seg.type === 'text')?.offsetX || 0);
+        let maxLineHeight = CURRENT_LINE_HEIGHT;
+        let isCodeBlockLine = false;
+        let dominantAlign: AlignType = 'left';
+        let lineTextWidth = 0;
+        let currentCodeBorderColor = '#000'; // Default fallback
+
+        line.forEach(seg => {
+          if (seg.isCodeLine) {
+            isCodeBlockLine = true;
+            // Dynamically assign the captured color
+            if (seg.codeBorderColor) currentCodeBorderColor = seg.codeBorderColor;
+          }
+          if (seg.type === 'text' && seg.width) {
+            lineTextWidth += seg.width;
+            if (seg.align) dominantAlign = seg.align as AlignType;
+          }
+        });
+
+        if (isCodeBlockLine) {
+          // If the border color isn't completely transparent, draw the line
+          if (currentCodeBorderColor !== 'transparent' && currentCodeBorderColor !== 'rgba(0, 0, 0, 0)') {
+            ctx.beginPath();
+            ctx.strokeStyle = currentCodeBorderColor;
+            ctx.lineWidth = 3 * SCALE;
+            ctx.moveTo(MARGIN_X, cursorY);
+            ctx.lineTo(MARGIN_X, cursorY + CURRENT_LINE_HEIGHT);
+            ctx.stroke();
+          }
+          // We always apply the 15px indentation regardless of line visibility
+          cursorX += 15 * SCALE;
+        }
+
+        const availableWidth = CANVAS_WIDTH - (MARGIN_X * 2);
+        const finalAlign = dominantAlign as AlignType;
+        
+        if (finalAlign === 'center') cursorX = MARGIN_X + (availableWidth - lineTextWidth) / 2;
+        else if (finalAlign === 'right') cursorX = MARGIN_X + (availableWidth - lineTextWidth);
+
+        line.forEach(seg => {
+          if (seg.type === 'image' && seg.imgElement) {
+            const drawW = seg.width || (200 * SCALE);
+            const drawH = seg.height || (150 * SCALE);
+            
+            if (seg.imgElement.complete && seg.imgElement.naturalWidth > 0) {
+              const imageX = seg.imageFloat === 'right' ? CANVAS_WIDTH - MARGIN_X - drawW : seg.imageFloat === 'left' ? MARGIN_X : cursorX;
+              ctx.drawImage(seg.imgElement, imageX, cursorY, drawW, drawH);
+              if (!seg.imageFloat || seg.imageFloat === 'none') maxLineHeight = drawH + 20;
+            } else {
+              seg.imgElement.decode().then(() => triggerParseRef.current(true)).catch(() => {});
+            }
+          } else if (seg.type === 'table' && seg.tableData) {
+            const { rows, colWidths } = seg.tableData;
+            let tableY = cursorY;
+            const tableFloat = seg.tableFloat || 'none';
+            rows.forEach((row, rIdx) => {
+              let tableX = tableFloat === 'right' ? CANVAS_WIDTH - MARGIN_X - seg.tableData!.totalWidth : MARGIN_X;
+              const rowHeight = row.maxHeight || CURRENT_LINE_HEIGHT * 1.2;
+              row.cells.forEach((cell, cIdx) => {
+                const cellWidth = colWidths[cIdx];
+                if (cell) {
+                  let fullWidth = cellWidth;
+                  if (cell.colSpan > 1) {
+                    for (let k = 1; k < cell.colSpan; k++) {
+                      fullWidth += colWidths[cIdx + k] || 0;
+                    }
+                  }
+                  let fullHeight = rowHeight;
+                  if (cell.rowSpan > 1) {
+                    fullHeight = 0;
+                    for (let rs = 0; rs < cell.rowSpan; rs++) {
+                      if (rows[rIdx + rs]) {
+                        fullHeight += rows[rIdx + rs].maxHeight || CURRENT_LINE_HEIGHT * 1.2;
+                      }
+                    }
+                  }
+
+                  ctx.beginPath();
+                  ctx.strokeStyle = "#444";
+                  ctx.lineWidth = 1.5;
+                  ctx.rect(tableX, tableY, fullWidth, fullHeight);
+                  ctx.stroke();
+
+                  ctx.font = `${cell.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+                  ctx.fillStyle = cell.color;
+
+                  const words = cell.text.split(' ');
+                  let textX = tableX + (10 * SCALE);
+                  let textY = tableY + (CURRENT_LINE_HEIGHT * 0.6);
+
+                  let totalTextWidth = 0;
+                  for (const word of words) {
+                    totalTextWidth += ctx.measureText(word).width + (spacingFactor * SCALE) + ctx.measureText(' ').width;
+                  }
+                  if (cell.align === 'center') textX = tableX + (fullWidth / 2) - (totalTextWidth / 2);
+                  if (cell.align === 'right') textX = tableX + fullWidth - totalTextWidth - (10 * SCALE);
+
+                  let currentX = textX;
+                  for (const word of words) {
+                    const wordWidth = ctx.measureText(word).width + (spacingFactor * SCALE);
+                    if (currentX + wordWidth > tableX + fullWidth - (10 * SCALE) && words.indexOf(word) > 0) {
+                      currentX = textX;
+                      textY += CURRENT_LINE_HEIGHT;
+                    }
+
+                    for (const char of word) {
+                      const charWidth = ctx.measureText(char).width;
+                      const isGreekGlyph = /[\u0370-\u03FF\u1F00-\u1FFF]/u.test(char);
+                      const glyphHumanize = humanizeFactor * (isGreekGlyph ? 1.35 : 1);
+                      const sizeVar = 1 + (rng() - 0.5) * (glyphHumanize * 0.08);
+                      const rY = (rng() - 0.5) * (skewFactor * SCALE * (isGreekGlyph ? 1.9 : 1.5));
+                      const rRot = (rng() - 0.5) * (skewFactor * (isGreekGlyph ? 0.4 : 0.15) * (Math.PI / 180));
+                      const xVar = (rng() - 0.5) * (glyphHumanize * (isGreekGlyph ? 0.9 : 0.5));
+
+                      ctx.save();
+                      ctx.translate(currentX + xVar, textY + rY);
+                      ctx.scale(sizeVar, sizeVar);
+                      ctx.rotate(rRot);
+                      ctx.fillText(char, 0, 0);
+                      ctx.restore();
+
+                      currentX += charWidth + (spacingFactor * SCALE);
+                    }
+                    currentX += ctx.measureText(' ').width;
+                  }
+                }
+                tableX += cellWidth;
+              });
+              tableY += rowHeight;
+            });
+            if (tableFloat === 'none') maxLineHeight = (tableY - cursorY) + 20;
+          } else if (seg.type === 'text' && seg.text) {
+            ctx.font = `${seg.isBold ? 'bold' : 'normal'} ${CURRENT_FONT_SIZE}px ${CURRENT_FONT.family}`;
+            ctx.fillStyle = seg.color || '#000';
+
+            for (let i = 0; i < seg.text.length; i++) {
+              const char = seg.text[i];
+              const charWidth = ctx.measureText(char).width;
+
+              const isGreekGlyph = /[\u0370-\u03FF\u1F00-\u1FFF]/u.test(char);
+              const glyphHumanize = humanizeFactor * (isGreekGlyph ? 1.35 : 1);
+              const sizeVar = 1 + (rng() - 0.5) * (glyphHumanize * 0.1);
+              const rY = (rng() - 0.5) * (skewFactor * SCALE * (isGreekGlyph ? 1.9 : 1.5));
+              const rRot = (rng() - 0.5) * (skewFactor * (isGreekGlyph ? 0.4 : 0.25) * (Math.PI / 180));
+              const xVar = (rng() - 0.5) * (glyphHumanize * (isGreekGlyph ? 1.1 : 0.8));
+              const yVar = (rng() - 0.5) * (glyphHumanize * (isGreekGlyph ? 0.8 : 0.5));
+
+              ctx.save();
+              ctx.translate(cursorX + charWidth / 2 + xVar, cursorY + rY + yVar);
+              ctx.scale(sizeVar, sizeVar);
+              ctx.rotate(rRot);
+              ctx.fillText(char, -charWidth / 2, 0);
+              ctx.restore();
+
+              if (seg.isUnderline) {
+                ctx.beginPath();
+                ctx.strokeStyle = seg.color || '#000';
+                ctx.lineWidth = 1.5;
+                const underlineY = cursorY + 5 + (rng() * 2);
+                ctx.moveTo(cursorX, underlineY);
+                ctx.lineTo(cursorX + charWidth, underlineY);
+                ctx.stroke();
+              }
+
+              cursorX += charWidth + (spacingFactor * SCALE);
+            }
+          }
+        });
+
+        cursorY += maxLineHeight;
+      });
+
+      const pageDrawings = drawings[index] || [];
+      if (pageDrawings.length > 0) {
+        pageDrawings.forEach(stroke => renderSmoothStroke(ctx, stroke));
+      }
+
+      if (scanEffect) {
+        const grad = ctx.createLinearGradient(0, 0, 100 * SCALE, 0);
+        grad.addColorStop(0, "rgba(0,0,0,0.1)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 100 * SCALE, CANVAS_HEIGHT);
+      }
+    });
+  }, [pages, skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings, humanizeFactor, CURRENT_FONT_SIZE, CURRENT_FONT, CURRENT_LINE_HEIGHT, AVAILABLE_WIDTH, renderSmoothStroke]);
+
+  // ==========================================================================
+  // SAVE/LOAD PROJECT
+  // ==========================================================================
+  const saveProject = useCallback(() => {
+    const project: ProjectFile = {
+      version: '19.0',
+      htmlContent: editorRef.current?.innerHTML || '',
+      drawings: drawings,
+      settings: {
+        skew: skewFactor,
+        lineOpacity,
+        scanEffect,
+        fontSize: baseFontSize,
+        paperType,
+        activeFontIndex,
+        spacing: spacingFactor,
+        humanize: humanizeFactor
+      }
+    };
+    const blob = new Blob([JSON.stringify(project)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'assignment.lazy';
+    a.click();
+    showToast("Project saved!", "success");
+  }, [skewFactor, lineOpacity, scanEffect, baseFontSize, paperType, activeFontIndex, spacingFactor, drawings, humanizeFactor, showToast]);
+
+  const loadProject = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const project = JSON.parse(event.target?.result as string) as ProjectFile;
+        if (editorRef.current) {
+          editorRef.current.innerHTML = DOMPurify.sanitize(project.htmlContent);
+        }
+        setSkewFactor(project.settings.skew);
+        setLineOpacity(project.settings.lineOpacity);
+        setScanEffect(project.settings.scanEffect);
+        setBaseFontSize(project.settings.fontSize || 18);
+        setPaperType(project.settings.paperType || 'lined');
+        setActiveFontIndex(project.settings.activeFontIndex || 0);
+        setSpacingFactor(project.settings.spacing || 0);
+        setHumanizeFactor(project.settings.humanize ?? project.settings.pressure ?? 3);
+        
+        if (project.drawings) setDrawings(project.drawings);
+        triggerParse(true);
+        showToast("Loaded successfully!", "success");
+      } catch {
+        showToast("Invalid project file.", "error");
+      }
+    };
+    reader.readAsText(file);
+  }, [triggerParse, showToast]);
+
+  // ==========================================================================
+  // PDF EXPORT
+  // ==========================================================================
+  const processScanEffect = (originalCanvas: HTMLCanvasElement): string => {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = originalCanvas.width;
+    tempCanvas.height = originalCanvas.height;
+    const tCtx = tempCanvas.getContext('2d')!;
+    tCtx.drawImage(originalCanvas, 0, 0);
+    const imgData = tCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
+    const data = imgData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i + 1], b = data[i + 2];
+      let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+      if (gray > 180) gray = 255;
+      else gray = gray * 0.8;
+      const noise = (Math.random() - 0.5) * 40;
+      gray += noise;
+      data[i] = data[i + 1] = data[i + 2] = gray;
+    }
+    tCtx.putImageData(imgData, 0, 0);
+    return tempCanvas.toDataURL('image/jpeg', 0.6);
+  };
+
+  const downloadPDF = useCallback(() => {
+    const doc = new jsPDF('p', 'pt', [A4_WIDTH, A4_HEIGHT]);
+    showToast("Generating PDF...", "info");
+    setTimeout(() => {
+      pages.forEach((_, i) => {
+        const canvas = canvasRefs.current[i];
+        if (canvas) {
+          if (i > 0) doc.addPage();
+          let imgData;
+          if (scanEffect) {
+            imgData = processScanEffect(canvas);
+            doc.addImage(imgData, 'JPEG', -5, 0, A4_WIDTH + 10, A4_HEIGHT, undefined, 'FAST', 0.5);
+          } else {
+            imgData = canvas.toDataURL('image/jpeg', 0.8);
+            doc.addImage(imgData, 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT);
+          }
+        }
+      });
+      doc.save('assignment.pdf');
+      showToast("PDF Downloaded!", "success");
+    }, 100);
+  }, [pages, scanEffect, showToast]);
+
+  // ==========================================================================
+  // INITIALIZATION
+  // ==========================================================================
+  useEffect(() => {
+    if (isInitializedRef.current) return;
+    isInitializedRef.current = true;
+
+    const link = document.createElement('link');
+    link.rel = 'icon';
+    link.href = 'https://upload.wikimedia.org/wikipedia/en/b/bd/Shin_chan_Source.png';
+    document.head.appendChild(link);
+
+    setTimeout(() => {
+      if (editorRef.current && editorRef.current.innerHTML.trim() === '') {
+        editorRef.current.innerHTML = DEFAULT_CONTENT;
+        triggerParse(true);
+      }
+    }, 100);
+  }, [triggerParse]);
+
+  // Mutation observer for editor changes
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    let debounceTimer: number;
+    const observer = new MutationObserver(() => {
+      clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(() => {
+        if (triggerParseRef.current) triggerParseRef.current();
+      }, 150);
+    });
+
+    observer.observe(editor, { childList: true, subtree: true, characterData: true });
+
+    return () => {
+      observer.disconnect();
+      clearTimeout(debounceTimer);
+    };
+  }, []); 
+
+  // ==========================================================================
+  // STYLES
+  // ==========================================================================
+  const sliderStyle = `
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%;
+      background: transparent;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 16px;
+      width: 16px;
+      border-radius: 50%;
+      background: #3b82f6;
+      border: 2px solid white;
+      cursor: pointer;
+      margin-top: -6px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    input[type=range]::-webkit-slider-runnable-track {
+      width: 100%;
+      height: 4px;
+      cursor: pointer;
+      background: #cbd5e1;
+      border-radius: 2px;
+    }
+  `;
+
+  // ==========================================================================
+  // RENDER
+  // ==========================================================================
+  return (
+    <div className={`min-h-screen flex flex-col items-center font-sans transition-colors duration-300 ${isDarkMode ? 'bg-slate-900 text-slate-100' : 'bg-neutral-100 text-slate-800'}`}>
+      <style>{sliderStyle}</style>
+      <style>
+        {`@import url('https://fonts.googleapis.com/css2?family=Allura&family=Caveat:wght@400;700&family=Cedarville+Cursive&family=Dancing+Script:wght@400;700&family=Homemade+Apple&family=Indie+Flower&family=Just+Another+Hand&family=Shadows+Into+Light&display=swap');`}
+      </style>
+
+      {/* TOAST NOTIFICATIONS */}
+      <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 pointer-events-none">
+        {toasts.map(toast => (
+          <div key={toast.id} className={`pointer-events-auto px-4 py-3 rounded-lg shadow-lg text-white text-sm font-medium flex items-center gap-2 animate-[slideUp_0.3s_ease-out] ${toast.type === 'error' ? 'bg-red-500' : toast.type === 'success' ? 'bg-green-500' : 'bg-slate-800'}`}>
+            {toast.type === 'success' && <span>✓</span>}
+            {toast.type === 'error' && <span>✕</span>}
+            {toast.message}
+            <button onClick={() => removeToast(toast.id)} className="ml-2 opacity-50 hover:opacity-100"><X size={14} /></button>
+          </div>
+        ))}
+      </div>
+
+      {/* IMAGE MODAL */}
+      {isImageModalOpen && (
+        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4" onClick={() => setIsImageModalOpen(false)}>
+          <div className={`rounded-xl p-6 max-w-md w-full ${isDarkMode ? 'bg-slate-800' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><ImageIcon size={20} /> Insert Image</h3>
+            <p className="text-sm opacity-70 mb-4">Select aspect ratio for your image:</p>
+            <div className="grid grid-cols-2 gap-2 mb-6">
+              {ASPECT_RATIOS.map((ratio, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => setSelectedAspectRatio(ratio)}
+                  className={`p-3 rounded-lg border text-sm transition-all ${selectedAspectRatio.label === ratio.label
+                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                    : (isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-200 hover:bg-slate-50')
+                    }`}
+                >
+                  <div className="font-medium">{ratio.label}</div>
+                  <div className="text-xs opacity-60">{ratio.w}×{ratio.h}px</div>
+                </button>
+              ))}
+            </div>
+            <div className="mb-5">
+              <label className="block text-xs font-semibold uppercase tracking-wide opacity-70 mb-2">Text wrapping</label>
+              <div className="grid grid-cols-3 gap-2">
+                {([['none', 'Above / below'], ['left', 'Wrap right'], ['right', 'Wrap left']] as const).map(([value, label]) => (
+                  <button key={value} onClick={() => setImageFloat(value)} className={`rounded-lg border px-2 py-2 text-xs ${imageFloat === value ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200'}`}>{label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setIsImageModalOpen(false)} className={`flex-1 py-2 rounded-lg border ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-200 hover:bg-slate-50'}`}>Cancel</button>
+              <button onClick={insertImageWithRatio} className="flex-1 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">Insert</button>
+            </div>
           </div>
         </div>
-      </section>
-      <section className="pv" aria-label="Preview">{pages.map((p, i) => <PageView key={i} page={p} idx={i} s={s} />)}</section>
-    </main>
-    {math && <MathDialog s={s} onInsert={insertMath} onClose={() => setMath(false)} />}
-    {img && <ImageDialog src={img} onInsert={insertImage} onClose={() => setImg(null)} />}
-    <div id="toast" className={toast ? 's' : ''} role="status">{toast}</div>
-  </>;
-}
+      )}
+
+      {/* HEADER */}
+      <header className={`fixed top-0 left-0 right-0 z-50 px-3 sm:px-6 py-4 transition-colors duration-300 ${isDarkMode ? 'bg-slate-900/90 border-slate-700' : 'bg-white/90 border-slate-200'} border-b backdrop-blur-md flex justify-between items-center shadow-sm`}>
+        <div className="max-w-6xl w-full mx-auto flex justify-between items-center">
+          <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
+            <span className="text-blue-600 text-2xl sm:text-3xl">✍</span>
+            <span>LazyScript</span>
+            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v19.0.1</span>
+            {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
+          </h1>
+          <div className="flex gap-2">
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-full transition-colors bg-slate-100 hover:bg-slate-200 text-slate-600">
+              {isDarkMode ? <Sun size={18} className="text-yellow-500" /> : <Moon size={18} />}
+            </button>
+            <div className="w-px h-8 bg-slate-300 mx-1 opacity-50 hidden sm:block"></div>
+            <div className="flex gap-1 sm:gap-2">
+              <button onClick={() => fileInputRef.current?.click()} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
+                <FileUp size={16} /> <span className="hidden sm:inline">Import</span>
+              </button>
+              
+              <input type="file" ref={fileInputRef} onChange={loadProject} accept=".lazy,.json,.azm" className="hidden" />
+              <input type="file" ref={imageInputRef} onChange={handleImageFileSelect} accept="image/*" className="hidden" />
+              
+              <button onClick={saveProject} className={`px-3 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-slate-800 hover:bg-slate-700 border-slate-700' : 'bg-white hover:bg-slate-50 border border-slate-200'}`}>
+                <Save size={16} /> <span className="hidden sm:inline">Save</span>
+              </button>
+              <button onClick={downloadPDF} className="bg-blue-600 hover:bg-blue-700 text-white px-3 sm:px-5 py-2 rounded-lg shadow-md text-sm font-medium flex gap-2 items-center transition-transform hover:scale-105">
+                <Download size={16} /> <span className="hidden sm:inline">PDF</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* MAIN CONTENT */}
+      <div className="w-full max-w-6xl flex flex-col lg:flex-row gap-4 lg:gap-8 pb-8 pt-28 px-4 lg:h-[calc(100vh-120px)]">
+        <div className="flex lg:hidden w-full rounded-lg border bg-white p-1 shadow-sm">
+          <button type="button" onClick={() => setMobilePanel('write')} aria-pressed={mobilePanel === 'write'} className={`flex-1 rounded-md py-2 text-sm font-semibold transition-colors ${mobilePanel === 'write' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}>Write</button>
+          <button type="button" onClick={() => setMobilePanel('preview')} aria-pressed={mobilePanel === 'preview'} className={`flex-1 rounded-md py-2 text-sm font-semibold transition-colors ${mobilePanel === 'preview' ? 'bg-blue-600 text-white' : 'text-slate-600'}`}>Preview</button>
+        </div>
+        
+        {/* EDITOR PANEL */}
+        <div className={`w-full lg:w-1/2 flex flex-col rounded-xl shadow-xl border overflow-hidden transition-colors h-[65vh] lg:h-full ${mobilePanel === 'write' ? 'flex' : 'hidden lg:flex'} ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'}`}>
+          <div className={`p-4 border-b transition-colors shrink-0 ${isDarkMode ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-100'} flex flex-col gap-4`}>
+            {/* Row 1: Text Formatting */}
+            <div className="flex flex-wrap gap-3 justify-between items-center">
+              <div className="flex flex-wrap gap-2 items-center">
+                <div className={`flex rounded-md overflow-hidden border ${isDarkMode ? 'border-slate-600' : 'border-slate-300'}`}>
+                  {['#000000', '#000f55', '#cc0000', '#1a5c20'].map(c => (
+                    <button key={c} onMouseDown={preventFocusLoss} onClick={() => applyFormat('foreColor', c)} className="w-8 h-8 hover:opacity-80 transition-opacity" style={{ backgroundColor: c }} title="Ink Color" />
+                  ))}
+                </div>
+                <div className={`w-px h-6 mx-1 ${isDarkMode ? 'bg-slate-600' : 'bg-slate-300'} hidden sm:block`}></div>
+                <button onMouseDown={preventFocusLoss} onClick={() => applyFormat('bold')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Bold"><Bold size={18} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => applyFormat('underline')} className={`p-2 rounded hover:bg-opacity-20 hover:bg-slate-500 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`} title="Underline"><Underline size={18} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={() => setIsDrawingMode(!isDrawingMode)} className={`p-2 rounded transition-colors ml-2 ${isDrawingMode ? 'bg-blue-600 text-white shadow-md transform scale-105' : 'bg-blue-50 text-blue-600 hover:bg-blue-100'}`} title="Toggle Pen Mode"><PenTool size={16} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={undoDrawing} className="p-2 rounded hover:bg-slate-100 text-slate-600" title="Undo Last Stroke"><Undo2 size={16} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={copyAIPrompt} className="p-2 rounded bg-purple-100 text-purple-700 hover:bg-purple-200 transition-colors ml-2 flex gap-1 items-center font-bold text-xs" title="Copy AI Prompt"><Bot size={16} /> Prompt</button>
+                <button onMouseDown={preventFocusLoss} onClick={pasteAIHtml} className="p-2 rounded bg-green-100 text-green-700 hover:bg-green-200 transition-colors ml-1 flex gap-1 items-center font-bold text-xs" title="Paste AI HTML Code"><FilePlus size={16} /> Paste AI</button>
+              </div>
+              <div className="flex gap-2 items-center mt-2 sm:mt-0">
+                <div className="relative case-selector">
+                  <button onMouseDown={preventFocusLoss} onClick={() => setIsCaseMenuOpen(!isCaseMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                    <ArrowUpNarrowWide size={14} />
+                    <span className="hidden sm:inline">Case</span>
+                    <ChevronDown size={12} className="opacity-50" />
+                  </button>
+                  {isCaseMenuOpen && (
+                    <div className="absolute top-full left-0 mt-2 w-32 bg-white border rounded-lg shadow-xl z-50 overflow-hidden py-1">
+                      <button onMouseDown={preventFocusLoss} onClick={() => changeCase('upper')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseUpper size={14} /> UPPER</button>
+                      <button onMouseDown={preventFocusLoss} onClick={() => changeCase('lower')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseLower size={14} /> lower</button>
+                      <button onMouseDown={preventFocusLoss} onClick={() => changeCase('title')} className="w-full text-left px-4 py-2 text-sm hover:bg-blue-50 text-black flex items-center gap-2"><CaseSensitive size={14} /> Title</button>
+                    </div>
+                  )}
+                </div>
+                <div className="relative font-selector">
+                  <button onMouseDown={preventFocusLoss} onClick={() => setIsFontMenuOpen(!isFontMenuOpen)} className={`flex items-center gap-1 px-3 py-1.5 rounded border text-sm font-medium ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-700' : 'border-slate-300 text-slate-700 hover:bg-slate-50'}`}>
+                    <FontIcon size={14} />
+                    <span className="max-w-[80px] truncate">{CURRENT_FONT.label}</span>
+                    <ChevronDown size={12} className="opacity-50" />
+                  </button>
+                  {isFontMenuOpen && (
+                    <div className="absolute top-full left-0 mt-2 w-48 bg-white border rounded-lg shadow-xl z-50 overflow-hidden py-1">
+                      {FONT_OPTIONS.map((f, idx) => (
+                        <button key={f.id} onMouseDown={preventFocusLoss} onClick={() => { setActiveFontIndex(idx); setIsFontMenuOpen(false); }} className={`w-full text-left px-4 py-2.5 text-sm hover:bg-blue-50 flex items-center justify-between group ${activeFontIndex === idx ? 'bg-blue-50 text-blue-600' : 'text-slate-700'}`}>
+                          <span style={{ fontFamily: f.family }}>{f.label}</span>
+                          {activeFontIndex === idx && <div className="w-1.5 h-1.5 rounded-full bg-blue-600"></div>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button onMouseDown={preventFocusLoss} onClick={deleteSelectedImage} className={`p-2 rounded border hover:bg-red-100 text-red-500 ${isDarkMode ? 'border-slate-600 hover:bg-red-900' : 'border-slate-200'} ${selectedImage ? 'ring-2 ring-red-400' : ''}`} title="Delete Selected Item"><Delete size={18} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={openImageModal} className={`p-2 rounded border cursor-pointer hover:bg-opacity-10 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-white' : 'border-slate-200 text-slate-700 hover:bg-black'}`} title="Insert Image with Ratio"><ImageIcon size={18} /></button>
+                <button onMouseDown={preventFocusLoss} onClick={clearEditor} className={`p-2 rounded transition-all ml-1 flex gap-1 items-center font-bold text-xs ${clearConfirmStage === 0 ? 'bg-slate-100 text-slate-600 hover:bg-slate-200' : clearConfirmStage === 1 ? 'bg-orange-100 text-orange-600' : 'bg-red-100 text-red-600 ring-2 ring-red-400'}`} title="Reset/New Page">
+                  {clearConfirmStage === 0 ? <><RefreshCw size={16} /></> : clearConfirmStage === 1 ? "New Page?" : "Really??"}
+                </button>
+              </div>
+            </div>
+
+            {/* Row 2: Table Tools */}
+            <div className="flex items-center gap-2 p-2 rounded-lg bg-blue-50/50 border border-blue-100 flex-wrap">
+              <span className="text-xs font-bold text-blue-800 px-2">Table:</span>
+              <button onMouseDown={preventFocusLoss} onClick={insertTable} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="New Table"><TableIcon size={16} /></button>
+              <div className="w-px h-4 bg-blue-200"></div>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('addRow')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Row"><Rows size={14} /><Plus size={10} /></button>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('delRow')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Row"><Rows size={14} /><Trash2 size={10} /></button>
+              <div className="w-px h-4 bg-blue-200"></div>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('addCol')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800 flex gap-1 text-xs items-center" title="Add Col"><Columns size={14} /><Plus size={10} /></button>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('delCol')} className="p-1.5 rounded hover:bg-red-100 text-red-600 flex gap-1 text-xs items-center" title="Delete Col"><Columns size={14} /><Trash2 size={10} /></button>
+              <div className="w-px h-4 bg-blue-200"></div>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('mergeRight')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Right"><ArrowRightFromLine size={14} /></button>
+              <button onMouseDown={preventFocusLoss} onClick={() => modifyTable('mergeDown')} className="p-1.5 rounded hover:bg-purple-100 text-purple-800 flex gap-1 text-xs items-center" title="Merge Down"><ArrowDownFromLine size={14} /></button>
+              <div className="w-px h-4 bg-blue-200"></div>
+              <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('left')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Left"><AlignLeft size={14} /></button>
+              <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('center')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Center"><AlignCenter size={14} /></button>
+              <button onMouseDown={preventFocusLoss} onClick={() => applyAlignment('right')} className="p-1.5 rounded hover:bg-blue-100 text-blue-800" title="Align Right"><AlignRight size={14} /></button>
+              <div className="w-px h-4 bg-blue-200"></div>
+              <button onMouseDown={preventFocusLoss} onClick={() => setTableFloat('left')} className="px-2 py-1 rounded hover:bg-blue-100 text-blue-800 text-xs" title="Wrap text to the right of table">Float L</button>
+              <button onMouseDown={preventFocusLoss} onClick={() => setTableFloat('right')} className="px-2 py-1 rounded hover:bg-blue-100 text-blue-800 text-xs" title="Wrap text to the left of table">Float R</button>
+              <button onMouseDown={preventFocusLoss} onClick={() => setTableFloat('none')} className="px-2 py-1 rounded hover:bg-blue-100 text-blue-800 text-xs" title="Reset table wrapping">Inline</button>
+            </div>
+
+            {/* Row 3: Settings */}
+            <div className="grid grid-cols-2 gap-6 pt-2">
+              <div className="space-y-3">
+                <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Messiness</span> <span>{skewFactor}</span></div>
+                <input type="range" min="0" max="3" step="0.5" value={skewFactor} onChange={(e) => setSkewFactor(parseFloat(e.target.value))} />
+                <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Font Size</span> <span>{baseFontSize}px</span></div>
+                <input type="range" min="14" max="32" step="1" value={baseFontSize} onChange={(e) => setBaseFontSize(parseInt(e.target.value))} />
+                <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Humanize</span> <span>{humanizeFactor}</span></div>
+                <input type="range" min="0" max="5" step="0.5" value={humanizeFactor} onChange={(e) => setHumanizeFactor(parseFloat(e.target.value))} />
+              </div>
+              <div className="space-y-3">
+                <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70"><span>Letter Spacing</span> <span>{spacingFactor}px</span></div>
+                <input type="range" min="-2" max="10" step="0.5" value={spacingFactor} onChange={(e) => setSpacingFactor(parseFloat(e.target.value))} />
+                <div className="flex justify-between text-xs font-semibold uppercase tracking-wider opacity-70 mt-1"><span>Line Opacity</span> <span>{Math.round(lineOpacity * 100)}%</span></div>
+                <input type="range" min="0" max="1" step="0.1" value={lineOpacity} onChange={(e) => setLineOpacity(parseFloat(e.target.value))} />
+                <div className="flex gap-2 pt-1">
+                  <button onMouseDown={preventFocusLoss} onClick={() => setPaperType(prev => prev === 'lined' ? 'grid' : prev === 'grid' ? 'blank' : 'lined')} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100'}`}>
+                    {paperType === 'lined' ? <><AlignJustify size={14} /> Lined</> : paperType === 'grid' ? <><Grid3X3 size={14} /> Grid</> : <><Type size={14} /> Blank</>}
+                  </button>
+                  <button onMouseDown={preventFocusLoss} onClick={() => setScanEffect(!scanEffect)} className={`flex-1 py-1.5 rounded text-xs font-medium border flex items-center justify-center gap-2 transition-colors ${scanEffect ? 'bg-blue-600 text-white border-blue-600 shadow-inner' : (isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-slate-300 hover:bg-slate-100')}`}>
+                    <ScanLine size={14} /> {scanEffect ? 'Scanner ON' : 'Scanner'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* EDITOR */}
+          <div className="flex-1 overflow-y-auto bg-white text-slate-900 relative" onClick={handleEditorClick}>
+            <div ref={editorRef} contentEditable className="min-h-full p-8 outline-none font-sans text-lg leading-relaxed" />
+          </div>
+        </div>
+
+        {/* PREVIEW PANEL */}
+        <div ref={containerRef} className={`w-full lg:w-1/2 overflow-y-auto rounded-xl shadow-inner border p-4 sm:p-6 flex flex-col items-center gap-4 sm:gap-6 lg:h-full ${mobilePanel === 'preview' ? 'flex' : 'hidden lg:flex'} ${isDarkMode ? 'bg-slate-900/50 border-slate-700' : 'bg-slate-200 border-slate-300'}`}>
+          {/* Zoom Controls */}
+          <div className="flex items-center gap-4 mb-2 shrink-0 sticky top-0 bg-inherit z-10 py-2 rounded-lg">
+            <button onClick={() => setZoom(Math.max(0.2, zoom - 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomOut size={18} /></button>
+            <span className="text-sm font-medium whitespace-nowrap">{Math.round(zoom * 100)}%</span>
+            <button onClick={() => setZoom(Math.min(1.2, zoom + 0.1))} className="p-2 rounded hover:bg-slate-300"><ZoomIn size={18} /></button>
+            <button onClick={() => setZoom(0.4)} className="p-2 rounded hover:bg-slate-300 text-xs font-medium">Reset</button>
+          </div>
+
+          {/* Canvas Pages */}
+          <div className="flex flex-col items-center w-full">
+            {pages.map((_, i) => (
+              <div 
+                key={i} 
+                className="relative group shrink-0" 
+                style={{ 
+                  width: CANVAS_WIDTH * zoom, 
+                  height: CANVAS_HEIGHT * zoom, 
+                  marginBottom: '24px'
+                }}
+              >
+                <span className={`absolute -left-10 top-0 font-bold text-xs opacity-50 ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Pg {i + 1}</span>
+                <canvas
+                  ref={el => { canvasRefs.current[i] = el; }}
+                  width={CANVAS_WIDTH}
+                  height={CANVAS_HEIGHT}
+                  className={`bg-white shadow-2xl rounded-sm transition-transform duration-300 origin-top-left ${isDrawingMode ? 'cursor-crosshair touch-none' : 'hover:scale-[1.01]'}`}
+                  style={{ transform: `scale(${zoom})` }}
+                  onPointerDown={(e) => startDrawing(i, e)}
+                  onPointerMove={(e) => drawMove(i, e)}
+                  onPointerUp={(e) => stopDrawing(i, e)}
+                  onPointerLeave={(e) => stopDrawing(i, e)}
+                />
+              </div>
+            ))}
+          </div>
+          {pages.length === 0 && (
+            <div className="text-center py-12 opacity-50">
+              <Type size={48} className="mx-auto mb-4" />
+              <p>Start typing in the editor above to see preview</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;

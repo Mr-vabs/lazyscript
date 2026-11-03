@@ -1,4 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=Caveat:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Allura&family=Architects+Daughter&family=Caveat:wght@400;500;600;700&family=Caveat+Brush&family=Cedarville+Cursive&family=Dancing+Script:wght@400;500;600;700&family=Homemade+Apple&family=Indie+Flower&family=Just+Another+Hand&family=Kalam:wght@300;400;700&family=Patrick+Hand&family=Shadows+Into+Light&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html, body, #root { min-height: 100%; }
+body { margin: 0; }
+button, input, select, textarea { font: inherit; }
+[contenteditable="true"] img { max-width: 100%; height: auto; }
+[contenteditable="true"] table { table-layout: auto; max-width: 100%; }
+[contenteditable="true"] td, [contenteditable="true"] th { overflow-wrap: anywhere; }
