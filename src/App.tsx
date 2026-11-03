@@ -91,6 +91,14 @@ const App: React.FC = () => {
   const [isImageModalOpen, setIsImageModalOpen] = useState(false);
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
   const [selectedAspectRatio, setSelectedAspectRatio] = useState(ASPECT_RATIOS[1]);
+  const [assignmentOpen, setAssignmentOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [studentName, setStudentName] = useState(localStorage.getItem('ls_student_name') || '');
+  const [enrollmentNo, setEnrollmentNo] = useState(localStorage.getItem('ls_enrollment_no') || '');
+  const [courseCode, setCourseCode] = useState(localStorage.getItem('ls_course_code') || '');
+  const [footerEnabled, setFooterEnabled] = useState(localStorage.getItem('ls_footer_enabled') !== 'false');
+  const [footerFontSize, setFooterFontSize] = useState(8);
+  const [footerBottom, setFooterBottom] = useState(18);
 
   // Refs
   const editorRef = useRef<HTMLDivElement>(null);
@@ -103,6 +111,7 @@ const App: React.FC = () => {
   const lastContentRef = useRef<string>('');
   const lastSettingsRef = useRef({ fontSize: 18, spacing: 0, fontIndex: 0 });
   const pagesLengthRef = useRef(0);
+  const triggerParseLaterRef = useRef<((force?: boolean) => void) | null>(null);
 
   // Keep ref synced
   useEffect(() => {
@@ -462,6 +471,15 @@ const App: React.FC = () => {
     }
     triggerParse();
   }, [showToast]);
+
+  const setTableFloat = useCallback((side: 'none' | 'left' | 'right') => {
+    const cell = getSelectedCell();
+    const table = cell?.closest('table') as HTMLTableElement | null;
+    if (!table) { showToast('Select a table cell first.', 'error'); return; }
+    table.style.float = side === 'none' ? 'none' : side;
+    table.style.margin = side === 'none' ? '10px 0' : '6px 14px 8px 0';
+    triggerParseLaterRef.current?.(true);
+  }, [getSelectedCell, showToast]);
 
   const insertTable = useCallback(() => {
     const tableHTML = `
@@ -835,20 +853,12 @@ const App: React.FC = () => {
   }, [parseContentToPages]);
 
   // Observer reference to prevent loop disconnects
+  useEffect(() => { triggerParseLaterRef.current = triggerParse; }, [triggerParse]);
+
   const triggerParseRef = useRef(triggerParse);
   useEffect(() => {
     triggerParseRef.current = triggerParse;
   }, [triggerParse]);
-
-  const setTableFloat = useCallback((side: 'none' | 'left' | 'right') => {
-    const cell = getSelectedCell();
-    const table = cell?.closest('table') as HTMLTableElement | null;
-    if (!table) { showToast('Select a table cell first.', 'error'); return; }
-    table.style.float = side === 'none' ? 'none' : side;
-    table.style.margin = side === 'none' ? '10px 0' : '6px 14px 8px 0';
-    triggerParse(true);
-  }, [getSelectedCell, showToast, triggerParse]);
-
 
   // ==========================================================================
   // TRIGGER REPARSE ON FONT/SPACING CHANGES
@@ -1205,12 +1215,22 @@ const App: React.FC = () => {
             imgData = canvas.toDataURL('image/jpeg', 0.8);
             doc.addImage(imgData, 'JPEG', 0, 0, A4_WIDTH, A4_HEIGHT);
           }
+          if (footerEnabled) {
+            const footer = [studentName.trim(), enrollmentNo.trim()].filter(Boolean).join('  ');
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(footerFontSize);
+            doc.setTextColor(55, 60, 70);
+            if (footer) doc.text(footer, 36, A4_HEIGHT - footerBottom, { align: 'left' });
+            doc.text(String(i + 1), A4_WIDTH - 36, A4_HEIGHT - footerBottom, { align: 'right' });
+          }
         }
       });
-      doc.save('assignment.pdf');
+      const safeCourse = courseCode.trim().replace(/[^a-zA-Z0-9-]/g, '-') || 'Assignment';
+      const safeEnrollment = enrollmentNo.trim().replace(/[^a-zA-Z0-9-]/g, '-') || 'Student';
+      doc.save(`${safeEnrollment}_${safeCourse}.pdf`);
       showToast("PDF Downloaded!", "success");
     }, 100);
-  }, [pages, scanEffect, showToast]);
+  }, [pages, scanEffect, showToast, footerEnabled, studentName, enrollmentNo, footerFontSize, footerBottom, courseCode]);
 
   // ==========================================================================
   // INITIALIZATION
@@ -1304,6 +1324,35 @@ const App: React.FC = () => {
         ))}
       </div>
 
+      {/* ASSIGNMENT STUDIO */}
+      {assignmentOpen && (
+        <div className="fixed inset-0 z-[220] flex items-center justify-center bg-slate-950/50 p-4" onClick={() => setAssignmentOpen(false)}>
+          <section className="w-full max-w-2xl max-h-[92vh] overflow-auto rounded-2xl border border-amber-100 bg-[#fffdf7] p-5 text-slate-800 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between"><div><p className="text-xs font-bold uppercase tracking-[.2em] text-amber-700">Paper Studio</p><h2 className="text-2xl font-bold">Assignment setup</h2><p className="text-sm text-slate-500">Save reusable student details and configure the final handwritten-page footer.</p></div><button onClick={() => setAssignmentOpen(false)} aria-label="Close"><X /></button></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-sm font-semibold">Student name<input className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-normal" value={studentName} onChange={e => setStudentName(e.target.value)} placeholder="Your full name" /></label>
+              <label className="text-sm font-semibold">Enrollment number<input className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-normal" value={enrollmentNo} onChange={e => setEnrollmentNo(e.target.value)} placeholder="Enrollment number" /></label>
+              <label className="text-sm font-semibold sm:col-span-2">Course code<input className="mt-1 w-full rounded-lg border border-slate-200 bg-white p-2 font-normal" value={courseCode} onChange={e => setCourseCode(e.target.value)} placeholder="e.g. BCOC-131" /></label>
+            </div>
+            <div className="mt-5 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+              <div className="flex items-center justify-between gap-3"><div><h3 className="font-bold">Page footer</h3><p className="text-xs text-slate-600">Applied to every page generated by the handwriting editor.</p></div><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={footerEnabled} onChange={e => setFooterEnabled(e.target.checked)} /> Enabled</label></div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2"><label className="text-xs font-semibold">Text size: {footerFontSize} pt<input className="mt-1 w-full" type="range" min="6" max="12" value={footerFontSize} onChange={e => setFooterFontSize(Number(e.target.value))} /></label><label className="text-xs font-semibold">Bottom offset: {footerBottom} pt<input className="mt-1 w-full" type="range" min="10" max="40" value={footerBottom} onChange={e => setFooterBottom(Number(e.target.value))} /></label></div>
+              <div className="mt-3 rounded-lg border border-slate-200 bg-white px-3 py-2 font-sans text-xs text-slate-600">{studentName || 'Student Name'} &nbsp; {enrollmentNo || 'Enrollment Number'} <span className="float-right">1</span></div>
+            </div>
+            <div className="mt-5 flex flex-wrap justify-end gap-2"><button className="rounded-lg border border-slate-300 px-4 py-2" onClick={() => setAssignmentOpen(false)}>Close</button><button className="rounded-lg bg-slate-900 px-4 py-2 font-semibold text-white" onClick={() => { localStorage.setItem('ls_student_name', studentName); localStorage.setItem('ls_enrollment_no', enrollmentNo); localStorage.setItem('ls_course_code', courseCode); localStorage.setItem('ls_footer_enabled', String(footerEnabled)); setAssignmentOpen(false); showToast('Assignment profile saved.', 'success'); }}>Save profile</button></div>
+          </section>
+        </div>
+      )}
+
+      {/* HELP */}
+      {helpOpen && (
+        <div className="fixed inset-0 z-[220] flex justify-end bg-slate-950/45" onClick={() => setHelpOpen(false)}>
+          <aside className="h-full w-full max-w-md overflow-auto bg-[#fffdf7] p-6 text-slate-800 shadow-2xl" onClick={e => e.stopPropagation()}><div className="flex items-center justify-between"><div><p className="text-xs font-bold uppercase tracking-widest text-amber-700">LazyScript guide</p><h2 className="text-2xl font-bold">How can we help?</h2></div><button onClick={() => setHelpOpen(false)}><X /></button></div>
+            <div className="mt-6 space-y-4 text-sm"><article><h3 className="font-bold">1. Start writing</h3><p className="text-slate-600">Type or paste your answers in the editor. Use the toolbar for formatting, images, tables and handwriting controls.</p></article><article><h3 className="font-bold">2. Choose handwriting</h3><p className="text-slate-600">Select a handwriting style and adjust messiness, font size, humanization and spacing until the preview looks right.</p></article><article><h3 className="font-bold">3. Set assignment details</h3><p className="text-slate-600">Open Assignment Studio to save your name, enrollment number, course code and footer preferences.</p></article><article><h3 className="font-bold">4. Save an editable project</h3><p className="text-slate-600">Use Save to keep a .lazy project that can be imported and edited later.</p></article><article><h3 className="font-bold">5. Export PDF</h3><p className="text-slate-600">PDF exports the handwritten pages and adds the configured student footer and sequential page number.</p></article><div className="rounded-xl bg-amber-50 p-3 text-xs text-amber-900">Note: This release exports the handwriting document. Merging cover page, ID card and question paper into one combined PDF is not yet included.</div></div>
+          </aside>
+        </div>
+      )}
+
       {/* IMAGE MODAL */}
       {isImageModalOpen && (
         <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center p-4" onClick={() => setIsImageModalOpen(false)}>
@@ -1347,10 +1396,12 @@ const App: React.FC = () => {
           <h1 className="text-lg sm:text-2xl font-bold flex items-center gap-2">
             <span className="text-blue-600 text-2xl sm:text-3xl">✍</span>
             <span>LazyScript</span>
-            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v19.0.1</span>
+            <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800 hidden sm:inline">v19.1.0</span>
             {isProcessing && <span className="text-xs text-blue-500 animate-pulse ml-2 hidden sm:inline">Processing...</span>}
           </h1>
           <div className="flex gap-2">
+            <button onClick={() => setAssignmentOpen(true)} className="flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2 sm:px-3 py-2 text-xs sm:text-sm font-semibold text-amber-900 hover:bg-amber-100"><FilePlus size={16} /> <span className="hidden sm:inline">Assignment Studio</span><span className="sm:hidden">Studio</span></button>
+            <button onClick={() => setHelpOpen(true)} aria-label="Help" title="Help" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">? Help</button>
             <button onClick={() => setIsDarkMode(!isDarkMode)} className="p-2 rounded-full transition-colors bg-slate-100 hover:bg-slate-200 text-slate-600">
               {isDarkMode ? <Sun size={18} className="text-yellow-500" /> : <Moon size={18} />}
             </button>
@@ -1530,6 +1581,7 @@ const App: React.FC = () => {
                   onPointerUp={(e) => stopDrawing(i, e)}
                   onPointerLeave={(e) => stopDrawing(i, e)}
                 />
+                {footerEnabled && <div className="pointer-events-none absolute bottom-[2.1%] left-[6%] right-[6%] flex justify-between border-t border-slate-200/70 pt-1 font-sans text-[8px] text-slate-600" style={{fontSize: `${footerFontSize * zoom}px`, bottom: `${footerBottom / A4_HEIGHT * 100}%`}}><span>{[studentName, enrollmentNo].filter(Boolean).join('  ')}</span><span>{i + 1}</span></div>}
               </div>
             ))}
           </div>
