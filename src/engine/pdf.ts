@@ -1,5 +1,5 @@
-import { Settings } from './config';
-import { Item } from './layout';
+import type { Settings } from './config';
+import type { Item } from './layout';
 import { renderPage } from './render';
 export async function exportPdf(pages: Item[][], s: Settings) {
   const { jsPDF } = await import('jspdf');
