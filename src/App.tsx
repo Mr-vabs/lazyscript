@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FONT_OPTIONS } from './config/fonts';
 import { AI_SYSTEM_PROMPT } from './config/aiPrompt';
-import type { SegmentType, PaperType, AlignType, CellStyle, TableRow, TableData, TextSegment, PageData, Point, Stroke, DrawingData, ProjectFile, ToastType } from './types/document';
+import type { PaperType, AlignType, CellStyle, TableRow, TextSegment, PageData, Stroke, DrawingData, ProjectFile, ToastType } from './types/document';
 import jsPDF from 'jspdf';
 import DOMPurify from 'dompurify';
 import {
@@ -463,15 +463,6 @@ const App: React.FC = () => {
     triggerParse();
   }, [showToast]);
 
-  const setTableFloat = useCallback((side: 'none' | 'left' | 'right') => {
-    const cell = getSelectedCell();
-    const table = cell?.closest('table') as HTMLTableElement | null;
-    if (!table) { showToast('Select a table cell first.', 'error'); return; }
-    table.style.float = side === 'none' ? 'none' : side;
-    table.style.margin = side === 'none' ? '10px 0' : '6px 14px 8px 0';
-    triggerParse(true);
-  }, [getSelectedCell, showToast, triggerParse]);
-
   const insertTable = useCallback(() => {
     const tableHTML = `
 <table style="border-collapse: collapse; width: 100%; margin: 10px 0; border: 1px solid #000;">
@@ -848,6 +839,16 @@ const App: React.FC = () => {
   useEffect(() => {
     triggerParseRef.current = triggerParse;
   }, [triggerParse]);
+
+  const setTableFloat = useCallback((side: 'none' | 'left' | 'right') => {
+    const cell = getSelectedCell();
+    const table = cell?.closest('table') as HTMLTableElement | null;
+    if (!table) { showToast('Select a table cell first.', 'error'); return; }
+    table.style.float = side === 'none' ? 'none' : side;
+    table.style.margin = side === 'none' ? '10px 0' : '6px 14px 8px 0';
+    triggerParse(true);
+  }, [getSelectedCell, showToast, triggerParse]);
+
 
   // ==========================================================================
   // TRIGGER REPARSE ON FONT/SPACING CHANGES

@@ -1,5 +1,6 @@
-import { W, H, ML, MT, MB, Settings, FONTS, lineH, fontStr } from './config';
-import { Item } from './layout';
+import { W, H, ML, MT, MB, FONTS, lineH, fontStr } from './config';
+import type { Settings } from './config';
+import type { Item } from './layout';
 import { hashStr } from './math';
 import { getImg } from './images';
 function rng(a: number) { return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
